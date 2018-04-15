@@ -12,16 +12,31 @@ from gym.envs.toy_text.tictactoe import TicTacToeEnv
 
 env = gym.make('TicTacToe-v0')
 
-
-gamma = 1
+# Start with a gamma of 0.0 to learn the rules, i.e.: do not penalize
+# any but the last move (which is illegal). Then, increase gamma, but
+# not to 1.0, because we should penalize later moves more strongly
+# than early moves.
+gamma = 0.5
 
 def discount_rewards(r):
     """ take 1D float array of rewards and compute discounted reward """
     discounted_r = np.zeros_like(r)
     running_add = 0
+    
+    # FIXME: HACK: We should need to do this, it should come from the
+    # caller
+    # This is needed because if O's ending the game, it's victory must
+    # be learned from
+    sign = np.sign(r[-1])
+
+    # Do not tamper with anything if special reward -10.0 is given
+    if r[-1] == -10.0:
+        return r
+    
     for t in reversed(range(0, r.size)):
         running_add = running_add * gamma + r[t]
-        discounted_r[t] = running_add
+        discounted_r[t] = sign * running_add
+        sign *= -1
     return discounted_r
 
 class agent():
@@ -41,6 +56,8 @@ class agent():
         self.indexes = tf.range(0, tf.shape(self.output)[0]) * tf.shape(self.output)[1] + self.action_holder
         self.responsible_outputs = tf.gather(tf.reshape(self.output, [-1]), self.indexes)
 
+        # GS: Could this log lead to NaN if the responsible output is negative ?
+        # What would this do on model training ???
         self.loss = -tf.reduce_mean(tf.log(self.responsible_outputs)*self.reward_holder)
         
         tvars = tf.trainable_variables()
@@ -48,19 +65,26 @@ class agent():
         for idx,var in enumerate(tvars):
             placeholder = tf.placeholder(tf.float32,name=str(idx)+'_holder')
             self.gradient_holders.append(placeholder)
-        
-        self.gradients = tf.gradients(self.loss,tvars)
+
+        # GS: however many states are provided FOR A SINGLE GAME, a
+        # single mean scalar loss is calculated and used to calculate
+        # gradients on tvars for THAT game. Then, "update_frequency"
+        # games are used to calculate an average gradient before they
+        # are actually applied for training. Are gradients normalized
+        # for their quantities or can this increase the effective lr
+        # by as much ?
+        self.gradients = tf.gradients(self.loss, tvars)
         
         optimizer = tf.train.AdamOptimizer(learning_rate=lr, epsilon=0.1)
         self.update_batch = optimizer.apply_gradients(zip(self.gradient_holders,tvars))
 
 tf.reset_default_graph() #Clear the Tensorflow graph.
 
-myAgent = agent(lr=1e-3,s_size=9,a_size=9,h_size=32768) #Load the agent.
+myAgent = agent(lr=5e-4,s_size=9,a_size=9,h_size=32768) #Load the agent.
 
 total_episodes = 1000000 #Set total number of episodes to train agent on.
 max_ep = 999
-update_frequency = 1000
+update_frequency = 10
 
 init = tf.global_variables_initializer()
 
@@ -114,7 +138,7 @@ with tf.Session() as sess:
 
     # Restore previously trained model
     tf_saver = tf.train.Saver(tf.global_variables())
-    tf_saver.restore(sess, model_checkpoint)
+    #tf_saver.restore(sess, model_checkpoint)
 
     if False:
         # Thoroughly compare model decisions with perfect player
@@ -190,7 +214,16 @@ with tf.Session() as sess:
 
         # For any given game, play against a varying strength AI
         #env.unwrapped.ai_strength = 0.0 if np.random.rand(1) < 1.0 else 1.0
+        
+        # Begin with a purely random adversary to make sure we cover
+        # different moves and get all illegal moves in
+        #env.unwrapped.ai_strength = 0.0
+
+        # Next, reactivate intelligent adversary
         env.unwrapped.ai_strength = np.random.rand(1)
+        env.unwrapped.ai_strength = 0.0
+        
+        env.unwrapped.self_play = True
         
         running_reward = 0
         ep_history = []
@@ -201,33 +234,67 @@ with tf.Session() as sess:
             a = np.argmax(a_dist == a)
 
             # Disable probabilistic pick
-            #a = np.argmax(a_dist)
+            a = np.argmax(a_dist)
 
             #if np.random.rand(1) < e:
             #    a = env.action_space.sample()
 
-            # After initial training, play without introducing random choices
-            if i > 4990000:
-                a = np.argmax(a_dist[0])
-
-            # Make move and play against perfect player
+            # Make move
             s1,r,d,_ = env.step(a)
 
-            # To begin with, a victory, loss or tie is worth the
-            # same. This is an attempt at learning to obey the
-            # rules, without overlearning loosing initially, which is
-            # the easiest reward to reach from -10
-            #if r >= -1.0:
-            #    r = 0.0
-            
-            # From now on, penalize loosing heavily
-            #if r == -1.0:
-            #    r = -10.0
-                
             ep_history.append([s,a,r,s1])
             s = s1
             running_reward += r
 
+            # If game is not over and previous step() call did not
+            # make the oponent's move, do it here
+            if not d and env.unwrapped.self_play:
+                #Probabilistically pick an action given our network outputs.
+                a_dist = sess.run(myAgent.output,feed_dict={myAgent.state_in:[-s]})
+                a = np.random.choice(a_dist[0],p=a_dist[0])
+                a = np.argmax(a_dist == a)
+
+                # Do play, if allowed
+                if env.unwrapped.state[a] == 0.0:
+                    env.unwrapped.state[a] = env.unwrapped.whose_turn()
+                    s1,r,d,_ = np.array(env.unwrapped.state), env.unwrapped.reward(), env.unwrapped.done(), {}
+                else:
+                    s1,r,d,_ = np.array(env.unwrapped.state), -10.0, True, {}
+                
+                # TODO: This is not real self-play right now
+                # if np.random.rand(1) < env.unwrapped.ai_strength:
+                #     a = env.unwrapped.play_perfect()
+                # else:
+                #     a = env.unwrapped.play_random()
+                    
+                
+
+                # Negate state to learn from other player's move: the
+                # agent under training only plays X.
+                ep_history.append([-s,a,r,s1])
+                s = s1
+                running_reward += r
+            
+            # To begin with, a victory, loss or tie is worth the
+            # same. This is an attempt at learning to obey the
+            # rules, without overlearning loosing initially, which is
+            # the next best reward after -10
+            # if r >= -1.0:
+            #    r = 0.0
+            
+            # From now on, do not overstress victories
+            #if r == 1.0:
+            #    r = 0.1
+
+            # From now on, penalize losses heavily
+            # if r == -1.0:
+            #     r = -10.0
+
+            # Turn ties into positive rewards to learn this strategy,
+            # which is the best you can do against a perfect player.
+            # if d == True and r == 0.0:
+            #     r = 1.0
+            
             if d == True:
 
                 # Report the lost
@@ -240,20 +307,32 @@ with tf.Session() as sess:
                 ep_history = np.array(ep_history)
                 ep_history[:,2] = discount_rewards(ep_history[:,2])
                 
+                #print('ep_history')
+                #print(ep_history)
+                #time.sleep(60)
+                
                 feed_dict = {myAgent.reward_holder: ep_history[:,2],
                              myAgent.action_holder: ep_history[:,1],
                              myAgent.state_in:      np.vstack(ep_history[:,0])}
 
                 #print(feed_dict)
-                
+
+                #print('ep_history size: ')
+                #print(ep_history)
                 grads = sess.run(myAgent.gradients, feed_dict=feed_dict)
 
-                #print(np.size(grads))
-                #time.sleep(5)
+                #print('grads size: ')
+                #print(grads)
+
+                #print('indexes:')
+                #return
                 
                 for idx,grad in enumerate(grads):
                     gradBuffer[idx] += grad
 
+                #print('')
+                #time.sleep(60)
+                
                 if i % update_frequency == 0 and i != 0:
                     feed_dict= dictionary = dict(zip(myAgent.gradient_holders, gradBuffer))
                     _ = sess.run(myAgent.update_batch, feed_dict=feed_dict)
@@ -266,8 +345,8 @@ with tf.Session() as sess:
 
         
             #Update our running tally of scores.
-        if i % 1000 == 0:
-            print(np.mean(total_reward[-1000:]))
+        if i % 100 == 0:
+            print(np.mean(total_reward[-100:]))
             env.render()
 
         if i % 1000 == 0:
