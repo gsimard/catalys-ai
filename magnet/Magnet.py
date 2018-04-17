@@ -65,14 +65,18 @@ def pinv(A, b, reltol=1.0e-6):
     return tf.matmul(v, tf.matmul(s_inv, tf.matmul(u, tf.reshape(b, [-1, 1]), transpose_a=True)))
 
 # Number of dipoles
-Nr = 4
+Nr = 8
 
 # Positions of moments
 r = np.array([
     [0, 2*np.cos(theta), 2*np.sin(theta)] for theta in np.linspace(0,2*pi,Nr,False)])
 
 # Direction of moments: all pointing towards +X
-m = 1/Nr * np.cross(r, np.cross([1,0,0], r))
+m = 2/Nr * np.cross(r, np.cross([1,0,0], r))
+
+# Populate some moments and clear others to see what the inverse will look like
+m = np.array([m[i] * (i % 2) for i in range(len(m))])
+
 
 # Direction of moments: circulating around the shaft
 #m = 1/Nr * np.cross([1,0,0], r)
@@ -112,6 +116,9 @@ B2 = sess.run(tf.reshape(b_flat, [-1, 3]))
 
 GP = np.linalg.pinv(sess.run(G))
 bb = sess.run(b_flat)
+
+# Add some noise
+bb += np.random.normal(scale=1e-8, size=np.size(bb))
 
 print(m)
 print(np.reshape(GP @ bb, (-1,3)))
