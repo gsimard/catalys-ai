@@ -65,17 +65,23 @@ def pinv(A, b, reltol=1.0e-6):
     return tf.matmul(v, tf.matmul(s_inv, tf.matmul(u, tf.reshape(b, [-1, 1]), transpose_a=True)))
 
 # Number of dipoles
-Nr = 8
+Nr = 1024
 
 # Positions of moments
 r = np.array([
-    [0, 2*np.cos(theta), 2*np.sin(theta)] for theta in np.linspace(0,2*pi,Nr,False)])
+    [0, 10e-3*np.cos(theta), 10e-3*np.sin(theta)] for theta in np.linspace(0,2*pi,Nr,False)])
+
+rn = np.linalg.norm(r, 2, 1)
+
+# Normalize r
+ru = r * 1/rn[:, np.newaxis]
 
 # Direction of moments: all pointing towards +X
-m = 2/Nr * np.cross(r, np.cross([1,0,0], r))
+# 1mm x 1mm cross section 10mm radius NdFeB 40 MGOe (979 kA/m)
+m = 61e-3/Nr * np.cross(ru, np.cross([1,0,0], ru))
 
 # Populate some moments and clear others to see what the inverse will look like
-m = np.array([m[i] * (i % 2) for i in range(len(m))])
+#m = np.array([m[i] * (i % 2) for i in range(len(m))])
 
 
 # Direction of moments: circulating around the shaft
@@ -85,9 +91,10 @@ m = np.array([m[i] * (i % 2) for i in range(len(m))])
 # Number of B measurement points
 Np = 128
 # Positions of B measurement points
-pos = np.array([
-    [0.1, 2.1*np.cos(theta + 2*pi/20), 2.1*np.sin(theta + 2*pi/10)] for theta in np.linspace(0,2*pi,Np,False)])
+#pos = np.array([
+#    [0.1, 2.1*np.cos(theta + 2*pi/20), 2.1*np.sin(theta + 2*pi/10)] for theta in np.linspace(0,2*pi,Np,False)])
 
+pos = np.array([[0, 0, 0], [10e-3, 0, 0], [10e-3, 10e-3, 0]])
 
 #pos = np.array([5,-3,4])
 #B = calculate_B_field(pos - r, m)
@@ -109,19 +116,20 @@ b_flat = tf.einsum('nm,m->n', G, m_flat)
 
 # Unflatten B
 B2 = sess.run(tf.reshape(b_flat, [-1, 3]))
+print(B2)
 #print(sess.run(B2))
 #print(B2[:,0])
 
 #M2 = sess.run(tf.reshape(pinv(G, b_flat), [-1, 3]))
 
-GP = np.linalg.pinv(sess.run(G))
-bb = sess.run(b_flat)
+#GP = np.linalg.pinv(sess.run(G))
+#bb = sess.run(b_flat)
 
 # Add some noise
-bb += np.random.normal(scale=1e-8, size=np.size(bb))
+#bb += np.random.normal(scale=1e-8, size=np.size(bb))
 
-print(m)
-print(np.reshape(GP @ bb, (-1,3)))
+#print(m)
+#print(np.reshape(GP @ bb, (-1,3)))
 
 
 #import matplotlib.pyplot as plt
