@@ -22,14 +22,13 @@ def discount_rewards(r):
     """ take 1D float array of rewards and compute discounted reward """
     discounted_r = np.zeros_like(r)
     running_add = 0
-    
-    # FIXME: HACK: We should need to do this, it should come from the
-    # caller
-    # This is needed because if O's ending the game, it's victory must
+
+    # This is needed because if O is ending the game, its victory must
     # be learned from
     sign = np.sign(r[-1])
-
-    # Do not tamper with anything if special reward -10.0 is given
+    
+    # Do not tamper with anything if special reward -10.0 is given:
+    # penalize just the illegal move, not the game
     if r[-1] == -10.0:
         return r
     
@@ -37,6 +36,10 @@ def discount_rewards(r):
         running_add = running_add * gamma + r[t]
         discounted_r[t] = sign * running_add
         sign *= -1
+        # Special reward means encourage everything
+        if r[-1] == 2.0:
+            discounted_r[t] = 1.0
+
     return discounted_r
 
 class agent():
@@ -80,7 +83,7 @@ class agent():
 
 tf.reset_default_graph() #Clear the Tensorflow graph.
 
-myAgent = agent(lr=5e-4,s_size=9,a_size=9,h_size=32768) #Load the agent.
+myAgent = agent(lr=1e-4,s_size=9,a_size=9,h_size=32768) #Load the agent.
 
 total_episodes = 1000000 #Set total number of episodes to train agent on.
 max_ep = 999
@@ -138,7 +141,7 @@ with tf.Session() as sess:
 
     # Restore previously trained model
     tf_saver = tf.train.Saver(tf.global_variables())
-    #tf_saver.restore(sess, model_checkpoint)
+    tf_saver.restore(sess, model_checkpoint)
 
     if False:
         # Thoroughly compare model decisions with perfect player
@@ -197,6 +200,8 @@ with tf.Session() as sess:
             
         print(res_good_pos)
            
+        print(k)
+        print(j)
         print(k/j)
       
         time.sleep(1000)
@@ -204,7 +209,10 @@ with tf.Session() as sess:
     i = 0
     total_reward = []
     total_lenght = []
-        
+
+    n_wrong = 0
+    beatdown = False
+    
     gradBuffer = sess.run(tf.trainable_variables())
     for ix,grad in enumerate(gradBuffer):
         gradBuffer[ix] = grad * 0
@@ -220,10 +228,12 @@ with tf.Session() as sess:
         #env.unwrapped.ai_strength = 0.0
 
         # Next, reactivate intelligent adversary
-        env.unwrapped.ai_strength = np.random.rand(1)
-        env.unwrapped.ai_strength = 0.0
+        #env.unwrapped.ai_strength = np.random.rand(1)
+        env.unwrapped.ai_strength = 0.5
         
-        env.unwrapped.self_play = True
+        env.unwrapped.self_play = False
+
+        #beatdown = True
         
         running_reward = 0
         ep_history = []
@@ -242,33 +252,58 @@ with tf.Session() as sess:
             # Make move
             s1,r,d,_ = env.step(a)
 
+            # To begin with, a victory, loss or tie is worth the
+            # same. This is an attempt at learning to obey the
+            # rules, without overlearning loosing initially, which is
+            # the next best reward after -10
+            # Beat down the illegal moves if there were too many
+            # during last round
+            if beatdown:
+                if r >= -1.0:
+                    r = 0.0
+            
             ep_history.append([s,a,r,s1])
             s = s1
             running_reward += r
 
             # If game is not over and previous step() call did not
             # make the oponent's move, do it here
-            if not d and env.unwrapped.self_play:
-                #Probabilistically pick an action given our network outputs.
-                a_dist = sess.run(myAgent.output,feed_dict={myAgent.state_in:[-s]})
-                a = np.random.choice(a_dist[0],p=a_dist[0])
-                a = np.argmax(a_dist == a)
+            if not d:
+                if env.unwrapped.self_play:
+                    #Probabilistically pick an action given our network outputs.
+                    a_dist = sess.run(myAgent.output,feed_dict={myAgent.state_in:[-s]})
+                    a = np.random.choice(a_dist[0],p=a_dist[0])
+                    a = np.argmax(a_dist == a)
 
-                # Do play, if allowed
-                if env.unwrapped.state[a] == 0.0:
-                    env.unwrapped.state[a] = env.unwrapped.whose_turn()
-                    s1,r,d,_ = np.array(env.unwrapped.state), env.unwrapped.reward(), env.unwrapped.done(), {}
-                else:
-                    s1,r,d,_ = np.array(env.unwrapped.state), -10.0, True, {}
-                
-                # TODO: This is not real self-play right now
-                # if np.random.rand(1) < env.unwrapped.ai_strength:
-                #     a = env.unwrapped.play_perfect()
-                # else:
-                #     a = env.unwrapped.play_random()
+                    # Disable probabilistic pick
+                    a = np.argmax(a_dist)
                     
-                
+                    # Do play, if allowed
+                    if env.unwrapped.state[a] == 0.0:
+                        env.unwrapped.state[a] = env.unwrapped.whose_turn()
+                        s1,r,d,_ = np.array(env.unwrapped.state), env.unwrapped.reward(), env.unwrapped.done(), {}
+                    else:
+                        s1,r,d,_ = np.array(env.unwrapped.state), -10.0, True, {}
 
+                else:
+                    # This is not real self-play right now
+                    if np.random.rand(1) < env.unwrapped.ai_strength:
+                        a = env.unwrapped.play_perfect()
+                    else:
+                        a = env.unwrapped.play_random()
+                        
+                    s1,r,d,_ = np.array(env.unwrapped.state), env.unwrapped.reward(), env.unwrapped.done(), {}
+
+                # To begin with, a victory, loss or tie is worth the
+                # same. This is an attempt at learning to obey the
+                # rules, without overlearning loosing initially, which is
+                # the next best reward after -10
+                # Beat down the illegal moves if there were too many
+                # during last round
+                if beatdown:
+                    if r >= -1.0:
+                        r = 0.0
+                    
                 # Negate state to learn from other player's move: the
                 # agent under training only plays X.
                 ep_history.append([-s,a,r,s1])
@@ -279,8 +314,8 @@ with tf.Session() as sess:
             # same. This is an attempt at learning to obey the
             # rules, without overlearning loosing initially, which is
             # the next best reward after -10
-            # if r >= -1.0:
-            #    r = 0.0
+            #if r >= -1.0:
+            #   r = 0.0
             
             # From now on, do not overstress victories
             #if r == 1.0:
@@ -346,6 +381,13 @@ with tf.Session() as sess:
         
             #Update our running tally of scores.
         if i % 100 == 0:
+            n_wrong = len(np.where(np.array(total_reward[-100:]) == -10.0)[0])
+            if n_wrong > 20:
+                beatdown = True
+            elif n_wrong < 10:
+                beatdown = False
+                
+            print(str(n_wrong) + ' beatdown' if beatdown else '')
             print(np.mean(total_reward[-100:]))
             env.render()
 
