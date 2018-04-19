@@ -16,7 +16,7 @@ env = gym.make('TicTacToe-v0')
 # any but the last move (which is illegal). Then, increase gamma, but
 # not to 1.0, because we should penalize later moves more strongly
 # than early moves.
-gamma = 0.5
+gamma = 1
 
 def discount_rewards(r):
     """ take 1D float array of rewards and compute discounted reward """
@@ -59,16 +59,22 @@ class agent():
         self.indexes = tf.range(0, tf.shape(self.output)[0]) * tf.shape(self.output)[1] + self.action_holder
         self.responsible_outputs = tf.gather(tf.reshape(self.output, [-1]), self.indexes)
 
-        # GS: Could this log lead to NaN if the responsible output is negative ?
-        # What would this do on model training ???
-        self.loss = -tf.reduce_mean(tf.log(self.responsible_outputs)*self.reward_holder)
-        
         tvars = tf.trainable_variables()
+        self.tvars_norm = []
         self.gradient_holders = []
         for idx,var in enumerate(tvars):
             placeholder = tf.placeholder(tf.float32,name=str(idx)+'_holder')
             self.gradient_holders.append(placeholder)
+            self.tvars_norm.append(tf.norm(var)**2)
 
+        self.tvars_norm = tf.reduce_sum(self.tvars_norm)
+        #self.tvars_norm = tf.Print(self.tvars_norm, [self.tvars_norm], message='Norm: ')
+            
+        # GS: Could this log lead to NaN if the responsible output is negative ?
+        # What would this do on model training ???
+        self.loss = -tf.reduce_sum(tf.log(tf.clip_by_value(self.responsible_outputs,1e-10,1.0))*self.reward_holder) # + self.tvars_norm
+        #self.loss = tf.Print(self.loss, [self.loss], message='Loss: ')
+        
         # GS: however many states are provided FOR A SINGLE GAME, a
         # single mean scalar loss is calculated and used to calculate
         # gradients on tvars for THAT game. Then, "update_frequency"
@@ -83,11 +89,14 @@ class agent():
 
 tf.reset_default_graph() #Clear the Tensorflow graph.
 
-myAgent = agent(lr=1e-4,s_size=9,a_size=9,h_size=32768) #Load the agent.
+myAgent = agent(lr=1e-3,s_size=9,a_size=9,h_size=32768) #Load the agent.
 
 total_episodes = 1000000 #Set total number of episodes to train agent on.
 max_ep = 999
-update_frequency = 10
+update_frequency = 1
+
+GAME_BACKLOG_LENGTH = 100000
+GAME_BACKLOG_SAMPLE = 16
 
 init = tf.global_variables_initializer()
 
@@ -129,19 +138,44 @@ def build_solution():
 
 #time.sleep(60)
 
-def agent_action(s):
+def illegal_actions(state):
+    return np.flatnonzero(state)
+
+def legal_actions(state):
+    return set(np.arange(0,9)).symmetric_difference(set(illegal_actions(state)))
+
+def agent_action(sess, state, rnd=True, dbg=False):
     # What would the agent's action be ?
-    a_dist = sess.run(myAgent.output,feed_dict={myAgent.state_in:[s]})
-    a = np.argmax(a_dist)
+    a_dist = sess.run(myAgent.output,feed_dict={myAgent.state_in:[state]})[0]
+
+    # Retrieve illegal actions given state and cancel their probabilities
+    a_dist[illegal_actions(state)] = 0
+
+    # Renormalize the probabily vector
+    a_dist = a_dist / np.sum(a_dist)
+
+    if dbg:
+        print(a_dist)
+        
+    # Pick a random action
+    a = np.random.choice(a_dist, p=a_dist)
+    a = np.argmax(a_dist == a)
+
+    # Disable probabilistic pick
+    if not rnd:
+        a = np.argmax(a_dist)
+    
     return a
 
 # Launch the tensorflow graph
-with tf.Session() as sess:
+sess = tf.Session()
+
+if True:
     sess.run(init)
 
     # Restore previously trained model
     tf_saver = tf.train.Saver(tf.global_variables())
-    tf_saver.restore(sess, model_checkpoint)
+    #tf_saver.restore(sess, model_checkpoint)
 
     if False:
         # Thoroughly compare model decisions with perfect player
@@ -161,7 +195,7 @@ with tf.Session() as sess:
                 and env.unwrapped.whose_turn() == 1):
 
                 # What would the agent do ?
-                a = agent_action(state)
+                a = agent_action(sess, state)
 
                 # What would a perfect player do ?
                 moves = TicTacToeEnv.tictactoe_dict[tuple(state)]
@@ -210,12 +244,18 @@ with tf.Session() as sess:
     total_reward = []
     total_lenght = []
 
-    n_wrong = 0
-    beatdown = False
+    performance = -10.0
+    last_performance = performance
+
+    abort = False
     
     gradBuffer = sess.run(tf.trainable_variables())
     for ix,grad in enumerate(gradBuffer):
         gradBuffer[ix] = grad * 0
+
+    # Non-zero reward moves are kept for a while so we can sample from
+    # them at training time
+    game_backlog = np.array([], dtype=np.float64).reshape(0,4)
         
     while i < total_episodes:
         s = env.reset()
@@ -229,22 +269,15 @@ with tf.Session() as sess:
 
         # Next, reactivate intelligent adversary
         #env.unwrapped.ai_strength = np.random.rand(1)
-        env.unwrapped.ai_strength = 0.5
+        env.unwrapped.ai_strength = 0.95
         
         env.unwrapped.self_play = False
 
-        #beatdown = True
-        
         running_reward = 0
         ep_history = []
         for j in range(max_ep):
-            #Probabilistically pick an action given our network outputs.
-            a_dist = sess.run(myAgent.output,feed_dict={myAgent.state_in:[s]})
-            a = np.random.choice(a_dist[0],p=a_dist[0])
-            a = np.argmax(a_dist == a)
-
-            # Disable probabilistic pick
-            a = np.argmax(a_dist)
+            # What would the agent do ?
+            a = agent_action(sess, s, rnd=False)
 
             #if np.random.rand(1) < e:
             #    a = env.action_space.sample()
@@ -252,15 +285,21 @@ with tf.Session() as sess:
             # Make move
             s1,r,d,_ = env.step(a)
 
+            if r == -10:
+                print('WHAT?')
+                a = agent_action(sess, s, dbg=True)
+                print(illegal_actions(s))
+                print(a)
+                env.render()
+            
             # To begin with, a victory, loss or tie is worth the
             # same. This is an attempt at learning to obey the
             # rules, without overlearning loosing initially, which is
             # the next best reward after -10
             # Beat down the illegal moves if there were too many
             # during last round
-            if beatdown:
-                if r >= -1.0:
-                    r = 0.0
+            #if r >= -1.0:
+            #    r = 0.0
             
             ep_history.append([s,a,r,s1])
             s = s1
@@ -270,13 +309,8 @@ with tf.Session() as sess:
             # make the oponent's move, do it here
             if not d:
                 if env.unwrapped.self_play:
-                    #Probabilistically pick an action given our network outputs.
-                    a_dist = sess.run(myAgent.output,feed_dict={myAgent.state_in:[-s]})
-                    a = np.random.choice(a_dist[0],p=a_dist[0])
-                    a = np.argmax(a_dist == a)
-
-                    # Disable probabilistic pick
-                    a = np.argmax(a_dist)
+                    # What would the agent do ?
+                    a = agent_action(sess, -s)
                     
                     # Do play, if allowed
                     if env.unwrapped.state[a] == 0.0:
@@ -300,9 +334,8 @@ with tf.Session() as sess:
                 # the next best reward after -10
                 # Beat down the illegal moves if there were too many
                 # during last round
-                if beatdown:
-                    if r >= -1.0:
-                        r = 0.0
+                #if r >= -1.0:
+                #    r = 0.0
                     
                 # Negate state to learn from other player's move: the
                 # agent under training only plays X.
@@ -332,69 +365,73 @@ with tf.Session() as sess:
             
             if d == True:
 
-                # Report the lost
-                # if env.unwrapped.reward() == -1:
-                #     env.render()
-                #     time.sleep(5)
-                    
-                #print('res: ' + str(r))
-                #Update the network.
+                # Discount rewards for this game
                 ep_history = np.array(ep_history)
                 ep_history[:,2] = discount_rewards(ep_history[:,2])
-                
-                #print('ep_history')
-                #print(ep_history)
-                #time.sleep(60)
-                
-                feed_dict = {myAgent.reward_holder: ep_history[:,2],
-                             myAgent.action_holder: ep_history[:,1],
-                             myAgent.state_in:      np.vstack(ep_history[:,0])}
 
-                #print(feed_dict)
+                # Null rewards would not affect the gradients
+                ep_history = np.array(list(filter(lambda x: x[2] != 0.0, ep_history)))
 
-                #print('ep_history size: ')
-                #print(ep_history)
-                grads = sess.run(myAgent.gradients, feed_dict=feed_dict)
-
-                #print('grads size: ')
-                #print(grads)
-
-                #print('indexes:')
-                #return
-                
-                for idx,grad in enumerate(grads):
-                    gradBuffer[idx] += grad
-
-                #print('')
-                #time.sleep(60)
-                
-                if i % update_frequency == 0 and i != 0:
-                    feed_dict= dictionary = dict(zip(myAgent.gradient_holders, gradBuffer))
-                    _ = sess.run(myAgent.update_batch, feed_dict=feed_dict)
-                    for ix,grad in enumerate(gradBuffer):
-                        gradBuffer[ix] = grad * 0
-                
+                # Keep running statistics
                 total_reward.append(running_reward)
                 total_lenght.append(j)
+
+                # Can we learn something from this game ?
+                if len(ep_history) > 0:
+                    
+                    # Keep only GAME_BACKLOG_LENGTH elements
+                    #game_backlog = np.concatenate((ep_history, game_backlog))
+                    #game_backlog = np.delete(game_backlog, np.s_[GAME_BACKLOG_LENGTH:], 0)
+
+                    # Is it time to train ?
+                    if len(game_backlog) >= 0 and i % update_frequency == 0:
+
+                        # Train a few times !
+                        #print('TRAINING !!!')
+
+                        for t in range(1):
+                            # Sample a training minibatch from the running backlog
+                            #game_sample = game_backlog[np.random.choice(game_backlog.shape[0], GAME_BACKLOG_SAMPLE, replace=False), :]
+                            game_sample = ep_history
+
+                            feed_dict = {myAgent.reward_holder: game_sample[:,2],
+                                         myAgent.action_holder: game_sample[:,1],
+                                         myAgent.state_in:      np.vstack(game_sample[:,0])}
+
+                            loss = sess.run(myAgent.loss, feed_dict=feed_dict)
+                            grads = sess.run(myAgent.gradients, feed_dict=feed_dict)
+
+                            for idx,grad in enumerate(grads):
+                                gradBuffer[idx] += grad
+
+                            feed_dict= dictionary = dict(zip(myAgent.gradient_holders, gradBuffer))
+                            _ = sess.run(myAgent.update_batch, feed_dict=feed_dict)
+                            for ix,grad in enumerate(gradBuffer):
+                                gradBuffer[ix] = grad * 0
+                    
                 break
 
         
             #Update our running tally of scores.
-        if i % 100 == 0:
-            n_wrong = len(np.where(np.array(total_reward[-100:]) == -10.0)[0])
-            if n_wrong > 20:
-                beatdown = True
-            elif n_wrong < 10:
-                beatdown = False
-                
-            print(str(n_wrong) + ' beatdown' if beatdown else '')
-            print(np.mean(total_reward[-100:]))
+        if i % 250 == 0:
+            print('game_backlog size:')
+            print(len(game_backlog))
+            print('')
+
+            performance = np.mean(total_reward[-250:])
+            print(performance)
             env.render()
 
-        if i % 1000 == 0:
-            tf_saver.save(sess, model_checkpoint)
-            print('checkpoint')
+            if performance > last_performance or performance > -0.1:
+                tf_saver.save(sess, model_checkpoint)
+                last_performance = performance
+                print('checkpoint')
+            #elif performance < -5:
+            #    abort = True
+            #    break
             
         i += 1
-    
-    tf_saver.save(sess, model_checkpoint)
+
+        if abort:
+            break
+
