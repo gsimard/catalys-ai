@@ -16,7 +16,7 @@ env = gym.make('TicTacToe-v0')
 # any but the last move (which is illegal). Then, increase gamma, but
 # not to 1.0, because we should penalize later moves more strongly
 # than early moves.
-gamma = 1
+gamma = 0.7
 
 def discount_rewards(r):
     """ take 1D float array of rewards and compute discounted reward """
@@ -26,12 +26,12 @@ def discount_rewards(r):
     # This is needed because if O is ending the game, its victory must
     # be learned from
     sign = np.sign(r[-1])
-    
+
     # Do not tamper with anything if special reward -10.0 is given:
     # penalize just the illegal move, not the game
     if r[-1] == -10.0:
         return r
-    
+
     for t in reversed(range(0, r.size)):
         running_add = running_add * gamma + r[t]
         discounted_r[t] = sign * running_add
@@ -46,16 +46,38 @@ class agent():
     def __init__(self, lr, s_size,a_size,h_size):
         #These lines established the feed-forward part of the network. The agent takes a state and produces an action.
         self.state_in= tf.placeholder(shape=[None,s_size],dtype=tf.float32)
-        hidden = slim.fully_connected(self.state_in,h_size,biases_initializer=None,activation_fn=tf.nn.relu)
 
-        self.output = slim.fully_connected(hidden,a_size,activation_fn=tf.nn.softmax,biases_initializer=None)
+        input_layer = tf.reshape(self.state_in, [-1, 3, 3, 1])
+
+        # Convolutional Layer #1
+        conv1 = tf.layers.conv2d(
+            inputs=input_layer,
+            filters=32,
+            kernel_size=[2, 2],
+            padding="same",
+            activation=tf.nn.relu)
+
+        # Convolutional Layer #2 and Pooling Layer #2
+        conv2 = tf.layers.conv2d(
+            inputs=conv1,
+            filters=64,
+            kernel_size=[2, 2],
+            padding="same",
+            activation=tf.nn.relu)
+
+        # Dense Layer
+        conv2_flat = tf.reshape(conv2, [-1, 3 * 3 * 64])
+        dense = tf.layers.dense(inputs=conv2_flat, units=1024, activation=tf.nn.relu)
+
+        # Logits Layer
+        self.output = slim.fully_connected( dense, a_size, activation_fn = tf.nn.softmax, biases_initializer=None )
         self.chosen_action = tf.argmax(self.output,1)
 
         #The next six lines establish the training proceedure. We feed the reward and chosen action into the network
         #to compute the loss, and use it to update the network.
         self.reward_holder = tf.placeholder(shape=[None],dtype=tf.float32)
         self.action_holder = tf.placeholder(shape=[None],dtype=tf.int32)
-        
+
         self.indexes = tf.range(0, tf.shape(self.output)[0]) * tf.shape(self.output)[1] + self.action_holder
         self.responsible_outputs = tf.gather(tf.reshape(self.output, [-1]), self.indexes)
 
@@ -69,12 +91,13 @@ class agent():
 
         self.tvars_norm = tf.reduce_sum(self.tvars_norm)
         #self.tvars_norm = tf.Print(self.tvars_norm, [self.tvars_norm], message='Norm: ')
-            
+
         # GS: Could this log lead to NaN if the responsible output is negative ?
         # What would this do on model training ???
-        self.loss = -tf.reduce_sum(tf.log(tf.clip_by_value(self.responsible_outputs,1e-10,1.0))*self.reward_holder) # + self.tvars_norm
+        #self.loss = -tf.reduce_sum(tf.log(tf.clip_by_value(self.responsible_outputs,1e-10,1.0))*self.reward_holder) # + self.tvars_norm
+        self.loss = -tf.reduce_sum(tf.log(self.responsible_outputs + 1e-7)*self.reward_holder) # + self.tvars_norm
         #self.loss = tf.Print(self.loss, [self.loss], message='Loss: ')
-        
+
         # GS: however many states are provided FOR A SINGLE GAME, a
         # single mean scalar loss is calculated and used to calculate
         # gradients on tvars for THAT game. Then, "update_frequency"
@@ -83,13 +106,13 @@ class agent():
         # for their quantities or can this increase the effective lr
         # by as much ?
         self.gradients = tf.gradients(self.loss, tvars)
-        
+
         optimizer = tf.train.AdamOptimizer(learning_rate=lr, epsilon=0.1)
         self.update_batch = optimizer.apply_gradients(zip(self.gradient_holders,tvars))
 
 tf.reset_default_graph() #Clear the Tensorflow graph.
 
-myAgent = agent(lr=1e-3,s_size=9,a_size=9,h_size=32768) #Load the agent.
+myAgent = agent(lr=3e-5,s_size=9,a_size=9,h_size=128) #Load the agent.
 
 total_episodes = 1000000 #Set total number of episodes to train agent on.
 max_ep = 999
@@ -115,10 +138,10 @@ def int2base(x, base):
         x = int(x / base)
 
     #digits.reverse()
-        
+
     for i in range(9,len(digits),-1):
         digits.append(-1)
-        
+
     return digits
 
 def build_solution():
@@ -130,10 +153,10 @@ def build_solution():
         ttt.state = k
         j,_ = ttt.minimax()
         tictactoe_dict[tuple(k)] = j
-        
+
     with open('tictactoe_dict.pkl', 'wb') as f:
         pickle.dump(tictactoe_dict, f)
-        
+
     return tictactoe_dict
 
 #time.sleep(60)
@@ -147,24 +170,40 @@ def legal_actions(state):
 def agent_action(sess, state, rnd=True, dbg=False):
     # What would the agent's action be ?
     a_dist = sess.run(myAgent.output,feed_dict={myAgent.state_in:[state]})[0]
+    a_tmp = a_dist
 
     # Retrieve illegal actions given state and cancel their probabilities
     a_dist[illegal_actions(state)] = 0
 
+    # Report the norm of probabilities
+    a_sum = np.sum(a_dist)
+    #print(a_sum)
+
+    # If the model doesn't know what to do
+    if a_sum < 1e-6:
+        # Pick any legal move
+        a_dist = np.ones_like(a_dist)
+        a_dist[illegal_actions(state)] = 0
+
     # Renormalize the probabily vector
     a_dist = a_dist / np.sum(a_dist)
 
-    if dbg:
+    if np.isnan(a_dist).any():
+        print("BLOW")
+        # Was it because all moves were illegal ?
+        print(illegal_actions(state))
+        print(a_tmp)
         print(a_dist)
-        
-    # Pick a random action
-    a = np.random.choice(a_dist, p=a_dist)
-    a = np.argmax(a_dist == a)
+        a = -1
+    else:
+        # Pick a random action
+        a = np.random.choice(a_dist, p=a_dist)
+        a = np.argmax(a_dist == a)
 
-    # Disable probabilistic pick
-    if not rnd:
-        a = np.argmax(a_dist)
-    
+        # Disable probabilistic pick
+        if not rnd:
+            a = np.argmax(a_dist)
+
     return a
 
 # Launch the tensorflow graph
@@ -175,7 +214,7 @@ if True:
 
     # Restore previously trained model
     tf_saver = tf.train.Saver(tf.global_variables())
-    #tf_saver.restore(sess, model_checkpoint)
+    tf_saver.restore(sess, model_checkpoint)
 
     if False:
         # Thoroughly compare model decisions with perfect player
@@ -231,15 +270,15 @@ if True:
         res_good_pos = [0] * 9
         for p in res_good.values():
             res_good_pos[p[0]] += 1
-            
+
         print(res_good_pos)
-           
+
         print(k)
         print(j)
         print(k/j)
-      
+
         time.sleep(1000)
-    
+
     i = 0
     total_reward = []
     total_lenght = []
@@ -248,7 +287,7 @@ if True:
     last_performance = performance
 
     abort = False
-    
+
     gradBuffer = sess.run(tf.trainable_variables())
     for ix,grad in enumerate(gradBuffer):
         gradBuffer[ix] = grad * 0
@@ -256,13 +295,13 @@ if True:
     # Non-zero reward moves are kept for a while so we can sample from
     # them at training time
     game_backlog = np.array([], dtype=np.float64).reshape(0,4)
-        
+
     while i < total_episodes:
         s = env.reset()
 
         # For any given game, play against a varying strength AI
         #env.unwrapped.ai_strength = 0.0 if np.random.rand(1) < 1.0 else 1.0
-        
+
         # Begin with a purely random adversary to make sure we cover
         # different moves and get all illegal moves in
         #env.unwrapped.ai_strength = 0.0
@@ -270,14 +309,23 @@ if True:
         # Next, reactivate intelligent adversary
         #env.unwrapped.ai_strength = np.random.rand(1)
         env.unwrapped.ai_strength = 0.95
-        
         env.unwrapped.self_play = False
+
+        # Is this game played against a perfect player or a random player ?
+        perfect_player = np.random.rand(1) < env.unwrapped.ai_strength
 
         running_reward = 0
         ep_history = []
         for j in range(max_ep):
             # What would the agent do ?
-            a = agent_action(sess, s, rnd=False)
+            a = agent_action(sess, s, rnd=True, dbg=True)
+
+            # NaN blow up !
+            if a == -1:
+                # What was the state of the game that led to this ?
+                env.render()
+                # Abort this game
+                break
 
             #if np.random.rand(1) < e:
             #    a = env.action_space.sample()
@@ -291,7 +339,7 @@ if True:
                 print(illegal_actions(s))
                 print(a)
                 env.render()
-            
+
             # To begin with, a victory, loss or tie is worth the
             # same. This is an attempt at learning to obey the
             # rules, without overlearning loosing initially, which is
@@ -300,7 +348,11 @@ if True:
             # during last round
             #if r >= -1.0:
             #    r = 0.0
-            
+
+            # Try to encourage ties
+            #if d and r == 0.0:
+            #    r = 0.5;
+
             ep_history.append([s,a,r,s1])
             s = s1
             running_reward += r
@@ -310,8 +362,8 @@ if True:
             if not d:
                 if env.unwrapped.self_play:
                     # What would the agent do ?
-                    a = agent_action(sess, -s)
-                    
+                    a = agent_action(sess, -s, dbg=True)
+
                     # Do play, if allowed
                     if env.unwrapped.state[a] == 0.0:
                         env.unwrapped.state[a] = env.unwrapped.whose_turn()
@@ -321,11 +373,11 @@ if True:
 
                 else:
                     # This is not real self-play right now
-                    if np.random.rand(1) < env.unwrapped.ai_strength:
+                    if perfect_player:
                         a = env.unwrapped.play_perfect()
                     else:
                         a = env.unwrapped.play_random()
-                        
+
                     s1,r,d,_ = np.array(env.unwrapped.state), env.unwrapped.reward(), env.unwrapped.done(), {}
 
                 # To begin with, a victory, loss or tie is worth the
@@ -336,20 +388,24 @@ if True:
                 # during last round
                 #if r >= -1.0:
                 #    r = 0.0
-                    
+
+                # Try to encourage ties
+                #if d and r == 0.0:
+                #    r = 0.5;
+
                 # Negate state to learn from other player's move: the
                 # agent under training only plays X.
                 ep_history.append([-s,a,r,s1])
                 s = s1
                 running_reward += r
-            
+
             # To begin with, a victory, loss or tie is worth the
             # same. This is an attempt at learning to obey the
             # rules, without overlearning loosing initially, which is
             # the next best reward after -10
             #if r >= -1.0:
             #   r = 0.0
-            
+
             # From now on, do not overstress victories
             #if r == 1.0:
             #    r = 0.1
@@ -362,7 +418,7 @@ if True:
             # which is the best you can do against a perfect player.
             # if d == True and r == 0.0:
             #     r = 1.0
-            
+
             if d == True:
 
                 # Discount rewards for this game
@@ -377,8 +433,9 @@ if True:
                 total_lenght.append(j)
 
                 # Can we learn something from this game ?
-                if len(ep_history) > 0:
-                    
+                # DEBUG: don't learn
+                if False and len(ep_history) > 0:
+
                     # Keep only GAME_BACKLOG_LENGTH elements
                     #game_backlog = np.concatenate((ep_history, game_backlog))
                     #game_backlog = np.delete(game_backlog, np.s_[GAME_BACKLOG_LENGTH:], 0)
@@ -408,10 +465,10 @@ if True:
                             _ = sess.run(myAgent.update_batch, feed_dict=feed_dict)
                             for ix,grad in enumerate(gradBuffer):
                                 gradBuffer[ix] = grad * 0
-                    
+
                 break
 
-        
+
             #Update our running tally of scores.
         if i % 250 == 0:
             print('game_backlog size:')
@@ -429,9 +486,8 @@ if True:
             #elif performance < -5:
             #    abort = True
             #    break
-            
+
         i += 1
 
         if abort:
             break
-
