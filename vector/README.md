@@ -82,7 +82,7 @@ python vector/rag_system.py --kb kb.pkl --interactive [--force-local-llm] [--dev
 **Mode non interactif (une seule question) :**
 
 ```bash
-python vector/rag_system.py --kb kb.pkl --query "Votre question ici" [--force-local-llm] [--device cuda] [...]
+python vector/rag_system.py --kb vector/kb_embeddings.pkl --query "Votre question ici" [--force-local-llm] [--device cuda] [...]
 ```
 
 *   `--query`: La question à poser.
@@ -94,7 +94,8 @@ Ce script effectue une recherche de similarité entre une requête et les chunks
 **Mode interactif :**
 
 ```bash
-python vector/semantic_search.py --kb kb.pkl --interactive [--top-k 5] [--device cuda]
+python vector/semantic_search.py --kb vector/kb_embeddings.pkl --interactive [--top-k 5] [--device cuda]
+python vector/semantic_search.py --kb vector/kb_embeddings.pkl [--top-k 5] [--device cuda] --query "Question ici"
 ```
 
 **Mode non interactif :**
