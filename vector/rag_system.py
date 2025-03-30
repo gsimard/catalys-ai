@@ -30,7 +30,7 @@ except ImportError:
 load_dotenv()
 
 class RAGSystem:
-    def __init__(self, embedding_model="BAAI/bge-m3", llm_model="meta-llama/Llama-2-7b-chat-hf", device=None, use_openai_endpoint=False):
+    def __init__(self, embedding_model="BAAI/bge-m3", llm_model="meta-llama/Llama-2-7b-chat-hf", device=None, use_openai_endpoint=False, debug=False):
         """
         Initialise le système RAG avec un modèle d'embedding et un LLM (local ou via API OpenAI).
 
@@ -39,7 +39,9 @@ class RAGSystem:
             llm_model: Modèle de langage local à utiliser (si use_openai_endpoint=False).
             device: Appareil sur lequel exécuter les modèles locaux.
             use_openai_endpoint: Si True, utilise l'endpoint OpenAI configuré via les variables d'environnement.
+            debug: Si True, active les messages de débogage.
         """
+        self.debug = debug # Stocker l'état de débogage
         if device is None:
             self.device = "cuda" if torch.cuda.is_available() else "cpu"
         else:
@@ -233,7 +235,8 @@ Question: {query}
 
 Réponse:"""
 
-        print(f"\n--- Prompt envoyé au LLM ---\n{prompt}\n---------------------------\n") # Ajout de l'impression du prompt
+        if self.debug:
+            print(f"\n--- Prompt envoyé au LLM ---\n{prompt}\n---------------------------\n")
 
         response = "Impossible de générer une réponse."
 
@@ -316,11 +319,13 @@ def main():
                         help="Mode recherche seulement (sans génération)")
     parser.add_argument("--top-k", type=int, default=3,
                         help="Nombre de documents à récupérer")
+    parser.add_argument("--debug", action="store_true",
+                        help="Activer l'affichage de débogage (chunks complets, prompt LLM)")
     
     args = parser.parse_args()
 
     # Initialisation du système RAG
-    rag_system = RAGSystem(llm_model=args.llm, device=args.device, use_openai_endpoint=args.use_openai)
+    rag_system = RAGSystem(llm_model=args.llm, device=args.device, use_openai_endpoint=args.use_openai, debug=args.debug)
 
     # Chargement de la base de connaissances
     if args.kb:
@@ -365,8 +370,9 @@ def main():
                         print("\nDocuments pertinents:")
                         for i, (doc, source, score, chunk_id) in enumerate(docs):
                             print(f"{i+1}. [{score:.4f}] Source: {source} (Chunk ID: {chunk_id})")
-                            print(f"   Contenu: {doc}") # Affichage complet
-                            print("-" * 20) # Séparateur
+                            if args.debug:
+                                print(f"   Contenu: {doc}") # Affichage complet si debug
+                                print("-" * 20) # Séparateur si debug
                     # Mode RAG complet
                     else:
                         response, docs = rag_system.generate(query, top_k=args.top_k)
@@ -374,8 +380,9 @@ def main():
                         print("\nDocuments pertinents utilisés pour la réponse:")
                         for i, (doc, source, score, chunk_id) in enumerate(docs):
                             print(f"{i+1}. [{score:.4f}] Source: {source} (Chunk ID: {chunk_id})")
-                            print(f"   Contenu: {doc}") # Affichage complet
-                            print("-" * 20) # Séparateur
+                            if args.debug:
+                                print(f"   Contenu: {doc}") # Affichage complet si debug
+                                print("-" * 20) # Séparateur si debug
                             
                         print(f"\nRéponse:\n{response}")
                 except Exception as e:
@@ -406,8 +413,9 @@ def main():
                         print("\nDocuments pertinents:")
                         for i, (doc, source, score, chunk_id) in enumerate(docs):
                             print(f"{i+1}. [{score:.4f}] Source: {source} (Chunk ID: {chunk_id})")
-                            print(f"   Contenu: {doc}") # Affichage complet
-                            print("-" * 20) # Séparateur
+                            if args.debug:
+                                print(f"   Contenu: {doc}") # Affichage complet si debug
+                                print("-" * 20) # Séparateur si debug
                     # Mode RAG complet
                     else:
                         response, docs = rag_system.generate(query, top_k=args.top_k)
@@ -415,8 +423,9 @@ def main():
                         print("\nDocuments pertinents utilisés pour la réponse:")
                         for i, (doc, source, score, chunk_id) in enumerate(docs):
                             print(f"{i+1}. [{score:.4f}] Source: {source} (Chunk ID: {chunk_id})")
-                            print(f"   Contenu: {doc}") # Affichage complet
-                            print("-" * 20) # Séparateur
+                            if args.debug:
+                                print(f"   Contenu: {doc}") # Affichage complet si debug
+                                print("-" * 20) # Séparateur si debug
                             
                         print(f"\nRéponse:\n{response}")
                 except Exception as e:
@@ -438,8 +447,9 @@ def main():
                     print("\nDocuments pertinents:")
                     for i, (doc, source, score, chunk_id) in enumerate(docs):
                         print(f"{i+1}. [{score:.4f}] Source: {source} (Chunk ID: {chunk_id})")
-                        print(f"   Contenu: {doc}") # Affichage complet
-                        print("-" * 20) # Séparateur
+                        if args.debug:
+                            print(f"   Contenu: {doc}") # Affichage complet si debug
+                            print("-" * 20) # Séparateur si debug
                 # Mode RAG complet
                 else:
                     response, docs = rag_system.generate(query, top_k=args.top_k)
@@ -447,8 +457,9 @@ def main():
                     print("\nDocuments pertinents utilisés pour la réponse:")
                     for i, (doc, source, score, chunk_id) in enumerate(docs):
                         print(f"{i+1}. [{score:.4f}] Source: {source} (Chunk ID: {chunk_id})")
-                        print(f"   Contenu: {doc}") # Affichage complet
-                        print("-" * 20) # Séparateur
+                        if args.debug:
+                            print(f"   Contenu: {doc}") # Affichage complet si debug
+                            print("-" * 20) # Séparateur si debug
                         
                     print(f"\nRéponse:\n{response}")
         except Exception as e:
@@ -470,8 +481,9 @@ def main():
                 print("\nDocuments pertinents:")
                 for i, (doc, source, score, chunk_id) in enumerate(docs):
                     print(f"{i+1}. [{score:.4f}] Source: {source} (Chunk ID: {chunk_id})")
-                    print(f"   Contenu: {doc}") # Affichage complet
-                    print("-" * 20) # Séparateur
+                    if args.debug:
+                        print(f"   Contenu: {doc}") # Affichage complet si debug
+                        print("-" * 20) # Séparateur si debug
             # Mode RAG complet
             else:
                 response, docs = rag_system.generate(args.query, top_k=args.top_k)
@@ -479,8 +491,9 @@ def main():
                 print("\nDocuments pertinents utilisés pour la réponse:")
                 for i, (doc, source, score, chunk_id) in enumerate(docs):
                     print(f"{i+1}. [{score:.4f}] Source: {source} (Chunk ID: {chunk_id})")
-                    print(f"   Contenu: {doc}") # Affichage complet
-                    print("-" * 20) # Séparateur
+                    if args.debug:
+                        print(f"   Contenu: {doc}") # Affichage complet si debug
+                        print("-" * 20) # Séparateur si debug
                     
                 print(f"\nRéponse:\n{response}")
         except Exception as e:
