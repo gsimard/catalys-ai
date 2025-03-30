@@ -299,7 +299,7 @@ Réponse:"""
         if self.use_openai and self.openai_client:
             # Génération via API OpenAI
             try:
-                print("Génération via l'API OpenAI...", end='')
+                print("Génération via l'API OpenAI...")
                 
                 # Démarrer l'animation du curseur dans un thread séparé
                 stop_spinner = threading.Event()
@@ -332,7 +332,7 @@ Réponse:"""
 
         elif self.llm and self.tokenizer_llm:
             # Génération via LLM local
-            print("Génération via le LLM local...", end='')
+            print("Génération via le LLM local...")
             
             # Démarrer l'animation du curseur dans un thread séparé
             stop_spinner = threading.Event()
