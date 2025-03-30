@@ -45,8 +45,19 @@ def extract_text_from_pdf(pdf_path):
     """
     text = ""
     errors = []
+
+    # Méthode 1: pdfminer.six (si disponible)
+    if PDFMINER_AVAILABLE and not text.strip():
+        try:
+            text_pdfminer = pdfminer_extract_text(pdf_path)
+            if text_pdfminer.strip():
+                text = text_pdfminer
+                print(f"Texte extrait avec succès de {pdf_path} en utilisant pdfminer.six")
+                return clean_text(text)
+        except Exception as e:
+            errors.append(f"pdfminer.six: {str(e)}")
     
-    # Méthode 1: PyPDF2 (si disponible)
+    # Méthode 2: PyPDF2 (si disponible)
     if PYPDF2_AVAILABLE:
         try:
             text_pypdf = ""
@@ -77,17 +88,6 @@ def extract_text_from_pdf(pdf_path):
                 return clean_text(text)
         except Exception as e:
             errors.append(f"PyPDF2: {str(e)}")
-    
-    # Méthode 2: pdfminer.six (si disponible)
-    if PDFMINER_AVAILABLE and not text.strip():
-        try:
-            text_pdfminer = pdfminer_extract_text(pdf_path)
-            if text_pdfminer.strip():
-                text = text_pdfminer
-                print(f"Texte extrait avec succès de {pdf_path} en utilisant pdfminer.six")
-                return clean_text(text)
-        except Exception as e:
-            errors.append(f"pdfminer.six: {str(e)}")
     
     # Méthode 3: OCR (si disponible et nécessaire)
     if OCR_AVAILABLE and not text.strip():
