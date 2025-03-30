@@ -104,3 +104,6 @@ ENV/
 
 # Aider
 .aider*
+
+# Prompt Toolkit History
+.rag_history

@@ -17,6 +17,15 @@ except ImportError:
     TRANSFORMERS_AVAILABLE = False
     print("Le package transformers n'est pas installé. La génération de réponses avec un LLM local ne sera pas disponible.")
 
+# Vérification de la disponibilité de prompt_toolkit
+try:
+    from prompt_toolkit import PromptSession
+    from prompt_toolkit.history import FileHistory
+    PROMPT_TOOLKIT_AVAILABLE = True
+except ImportError:
+    PROMPT_TOOLKIT_AVAILABLE = False
+    print("Le package prompt_toolkit n'est pas installé. L'historique et la navigation avancée en mode interactif ne seront pas disponibles.")
+
 # Charger les variables d'environnement depuis un fichier .env s'il existe
 load_dotenv()
 
@@ -327,13 +336,96 @@ def main():
     
     # Mode interactif
     if args.interactive:
-        print("\nMode interactif. Tapez 'exit' pour quitter.")
-        while True:
-            query = input("\nQuestion: ")
-            if query.lower() == 'exit':
-                break
-            try:
-                # Déterminer si la génération est possible
+        print("\nMode interactif. Tapez 'exit' ou Ctrl+D pour quitter.")
+        
+        if PROMPT_TOOLKIT_AVAILABLE:
+            # Utiliser prompt_toolkit si disponible
+            session = PromptSession(history=FileHistory('.rag_history'))
+            while True:
+                try:
+                    query = session.prompt("\nQuestion: ")
+                    if query.lower() == 'exit':
+                        break
+                    if not query.strip(): # Ignorer les entrées vides
+                        continue
+                except (EOFError, KeyboardInterrupt):
+                    break # Quitter proprement avec Ctrl+D ou Ctrl+C
+                
+                try:
+                    # Déterminer si la génération est possible
+                    generation_possible = rag_system.use_openai or (TRANSFORMERS_AVAILABLE and rag_system.llm is not None)
+
+                    # Mode recherche seulement ou si la génération n'est pas possible
+                    if args.search_only or not generation_possible:
+                        if not generation_possible and not args.search_only:
+                             print("\nAvertissement: Génération impossible (LLM non chargé ou non configuré). Affichage des résultats de recherche seulement.")
+                        
+                        docs = rag_system.retrieve(query, top_k=args.top_k)
+                        
+                        print("\nDocuments pertinents:")
+                        for i, (doc, source, score, chunk_id) in enumerate(docs):
+                            print(f"{i+1}. [{score:.4f}] Source: {source} (Chunk ID: {chunk_id})")
+                            print(f"   Contenu: {doc}") # Affichage complet
+                            print("-" * 20) # Séparateur
+                    # Mode RAG complet
+                    else:
+                        response, docs = rag_system.generate(query, top_k=args.top_k)
+                        
+                        print("\nDocuments pertinents utilisés pour la réponse:")
+                        for i, (doc, source, score, chunk_id) in enumerate(docs):
+                            print(f"{i+1}. [{score:.4f}] Source: {source} (Chunk ID: {chunk_id})")
+                            print(f"   Contenu: {doc}") # Affichage complet
+                            print("-" * 20) # Séparateur
+                            
+                        print(f"\nRéponse:\n{response}")
+                except Exception as e:
+                    print(f"Erreur: {e}")
+        else:
+            # Fallback vers input() si prompt_toolkit n'est pas disponible
+            while True:
+                try:
+                    query = input("\nQuestion: ")
+                    if query.lower() == 'exit':
+                        break
+                    if not query.strip(): # Ignorer les entrées vides
+                        continue
+                except EOFError:
+                    break # Quitter avec Ctrl+D
+                
+                try:
+                    # Déterminer si la génération est possible
+                    generation_possible = rag_system.use_openai or (TRANSFORMERS_AVAILABLE and rag_system.llm is not None)
+
+                    # Mode recherche seulement ou si la génération n'est pas possible
+                    if args.search_only or not generation_possible:
+                        if not generation_possible and not args.search_only:
+                             print("\nAvertissement: Génération impossible (LLM non chargé ou non configuré). Affichage des résultats de recherche seulement.")
+                        
+                        docs = rag_system.retrieve(query, top_k=args.top_k)
+                        
+                        print("\nDocuments pertinents:")
+                        for i, (doc, source, score, chunk_id) in enumerate(docs):
+                            print(f"{i+1}. [{score:.4f}] Source: {source} (Chunk ID: {chunk_id})")
+                            print(f"   Contenu: {doc}") # Affichage complet
+                            print("-" * 20) # Séparateur
+                    # Mode RAG complet
+                    else:
+                        response, docs = rag_system.generate(query, top_k=args.top_k)
+                        
+                        print("\nDocuments pertinents utilisés pour la réponse:")
+                        for i, (doc, source, score, chunk_id) in enumerate(docs):
+                            print(f"{i+1}. [{score:.4f}] Source: {source} (Chunk ID: {chunk_id})")
+                            print(f"   Contenu: {doc}") # Affichage complet
+                            print("-" * 20) # Séparateur
+                            
+                        print(f"\nRéponse:\n{response}")
+                except Exception as e:
+                    print(f"Erreur: {e}")
+
+    # Mode non interactif
+    elif args.query:
+        try:
+            # Déterminer si la génération est possible
                 generation_possible = rag_system.use_openai or (TRANSFORMERS_AVAILABLE and rag_system.llm is not None)
 
                 # Mode recherche seulement ou si la génération n'est pas possible
