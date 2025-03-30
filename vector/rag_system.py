@@ -242,14 +242,14 @@ class RAGSystem:
         
         return top_docs
         
-    def generate(self, query, top_k=3, max_length=512):
+    def generate(self, query, top_k=3, max_length=1024):
         """
         Génère une réponse à une requête en utilisant le RAG.
         
         Args:
             query: Requête de l'utilisateur
             top_k: Nombre de documents à récupérer
-            max_length: Longueur maximale de la réponse
+            max_length: Longueur maximale de la réponse (en tokens)
             
         Returns:
             Tuple: (Réponse générée, Liste des documents pertinents)
@@ -353,6 +353,8 @@ def main():
                         help="Mode recherche seulement (sans génération)")
     parser.add_argument("--top-k", type=int, default=3,
                         help="Nombre de documents à récupérer")
+    parser.add_argument("--max-length", type=int, default=1024,
+                        help="Longueur maximale de la réponse générée (en tokens)")
     parser.add_argument("--debug", action="store_true",
                         help="Activer l'affichage de débogage (chunks complets, prompt LLM)")
     
@@ -494,7 +496,7 @@ def main():
                             print("-" * 20) # Séparateur si debug
                 # Mode RAG complet
                 else:
-                    response, docs = rag_system.generate(query, top_k=args.top_k)
+                    response, docs = rag_system.generate(query, top_k=args.top_k, max_length=args.max_length)
                     
                     print("\nDocuments pertinents utilisés pour la réponse:")
                     for i, (doc, source, score, chunk_id) in enumerate(docs):
@@ -528,7 +530,7 @@ def main():
                         print("-" * 20) # Séparateur si debug
             # Mode RAG complet
             else:
-                response, docs = rag_system.generate(args.query, top_k=args.top_k)
+                response, docs = rag_system.generate(args.query, top_k=args.top_k, max_length=args.max_length)
                 
                 print("\nDocuments pertinents utilisés pour la réponse:")
                 for i, (doc, source, score, chunk_id) in enumerate(docs):
