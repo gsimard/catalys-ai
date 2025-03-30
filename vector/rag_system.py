@@ -31,15 +31,17 @@ except ImportError:
 load_dotenv()
 
 class RAGSystem:
-    def __init__(self, embedding_model="BAAI/bge-m3", llm_model="meta-llama/Llama-2-7b-chat-hf", device=None, use_openai_endpoint=False, debug=False):
+    def __init__(self, embedding_model="BAAI/bge-m3", llm_model="meta-llama/Llama-2-7b-chat-hf", device=None, force_local_llm=False, debug=False):
         """
-        Initialise le système RAG avec un modèle d'embedding et un LLM (local ou via API OpenAI).
+        Initialise le système RAG avec un modèle d'embedding et un LLM.
+        Priorise l'utilisation d'un endpoint externe (type OpenAI) si configuré via .env,
+        sauf si force_local_llm est True.
 
         Args:
             embedding_model: Modèle d'embedding à utiliser.
-            llm_model: Modèle de langage local à utiliser (si use_openai_endpoint=False).
+            llm_model: Modèle de langage local à utiliser (si l'endpoint externe n'est pas utilisé).
             device: Appareil sur lequel exécuter les modèles locaux.
-            use_openai_endpoint: Si True, utilise l'endpoint OpenAI configuré via les variables d'environnement.
+            force_local_llm: Si True, force l'utilisation du LLM local même si un endpoint externe est configuré.
             debug: Si True, active les messages de débogage.
         """
         self.debug = debug # Stocker l'état de débogage
@@ -59,32 +61,40 @@ class RAGSystem:
         self.tokenizer_llm = None
         self.openai_client = None
         self.openai_model = None
-        self.use_openai = False
+        self.use_openai = False # Sera mis à True si l'endpoint externe est utilisé
 
-        # Vérifier si on doit utiliser l'endpoint OpenAI
+        # Déterminer quel LLM utiliser
         nebius_api_base = os.getenv("NEBIUS_API_BASE")
         nebius_api_key = os.getenv("NEBIUS_API_KEY")
         nebius_model = os.getenv("NEBIUS_AI_MODEL")
 
-        if use_openai_endpoint and nebius_api_base and nebius_api_key and nebius_model:
-            print(f"Configuration de l'endpoint OpenAI/Nebius: {nebius_api_base}")
+        # Condition pour utiliser l'endpoint externe : variables définies ET on ne force PAS le local
+        should_use_external = nebius_api_base and nebius_api_key and nebius_model and not force_local_llm
+
+        if should_use_external:
+            print(f"Configuration de l'endpoint externe (type OpenAI) détectée: {nebius_api_base}")
             try:
                 self.openai_client = openai.OpenAI(
                     base_url=nebius_api_base,
                     api_key=nebius_api_key,
                 )
                 self.openai_model = nebius_model
-                self.use_openai = True
-                print(f"Client OpenAI initialisé pour le modèle: {self.openai_model}")
+                self.use_openai = True # Marquer comme utilisant l'API externe
+                print(f"Client externe (type OpenAI) initialisé pour le modèle: {self.openai_model}")
             except Exception as e:
-                print(f"Erreur lors de l'initialisation du client OpenAI: {e}")
-                print("Retour à l'utilisation du LLM local si possible.")
-                self.use_openai = False
-        
-        # Si on n'utilise pas OpenAI, essayer de charger le LLM local
+                print(f"Erreur lors de l'initialisation du client externe: {e}")
+                print("Retour à la tentative d'utilisation du LLM local si possible.")
+                self.use_openai = False # Échec de l'initialisation externe
+
+        # Si on n'utilise PAS l'endpoint externe (soit par échec, soit par choix --force-local-llm, soit non configuré)
         if not self.use_openai:
+            if force_local_llm:
+                print("Utilisation forcée du LLM local.")
+            elif not (nebius_api_base and nebius_api_key and nebius_model):
+                print("Endpoint externe non configuré via les variables d'environnement.")
+            
             if TRANSFORMERS_AVAILABLE:
-                print(f"Tentative de chargement du LLM local {llm_model} sur {self.device}...")
+                print(f"Tentative de chargement du LLM local '{llm_model}' sur {self.device}...")
                 try:
                     self.tokenizer_llm = AutoTokenizer.from_pretrained(llm_model)
                     # Charger le modèle sur le CPU si CUDA n'est pas disponible ou si device est 'cpu'
@@ -93,9 +103,11 @@ class RAGSystem:
                     print(f"LLM local chargé avec succès sur {model_device}!")
                 except Exception as e:
                     print(f"Erreur lors du chargement du LLM local: {e}")
-                    print("La génération de réponses ne sera pas disponible.")
+                    print("La génération de réponses avec le LLM local ne sera pas disponible.")
             else:
-                 print("Transformers non disponible et endpoint OpenAI non configuré. Génération de réponses impossible.")
+                 print("Le package 'transformers' n'est pas installé. Impossible de charger un LLM local.")
+                 if not self.use_openai: # Si l'externe n'a pas été chargé non plus
+                     print("AVERTISSEMENT: Aucun LLM (externe ou local) n'est disponible. La génération de réponses est impossible.")
 
         # Base de connaissances
         self.kb_texts = []
@@ -327,12 +339,12 @@ Réponse:"""
 def main():
     parser = argparse.ArgumentParser(description="Système RAG avec bge-m3")
     parser.add_argument("--kb", type=str, help="Fichier ou répertoire de la base de connaissances")
-    parser.add_argument("--device", type=str, default=None, 
-                        help="Appareil à utiliser (cpu, cuda, cuda:0, etc.)")
+    parser.add_argument("--device", type=str, default=None,
+                        help="Appareil à utiliser pour les modèles locaux (embeddings, LLM local) (cpu, cuda, cuda:0, etc.)")
     parser.add_argument("--llm", type=str, default="meta-llama/Llama-2-7b-chat-hf",
-                        help="Modèle de langage local à utiliser (ignoré si --use-openai)")
-    parser.add_argument("--use-openai", action="store_true",
-                        help="Utiliser l'endpoint OpenAI/Nebius configuré via les variables d'environnement")
+                        help="Modèle de langage local à utiliser (si l'endpoint externe n'est pas utilisé ou si --force-local-llm est activé)")
+    parser.add_argument("--force-local-llm", action="store_true",
+                        help="Forcer l'utilisation du LLM local même si un endpoint externe est configuré via les variables d'environnement")
     parser.add_argument("--interactive", action="store_true",
                         help="Mode interactif")
     parser.add_argument("--query", type=str,
@@ -347,7 +359,7 @@ def main():
     args = parser.parse_args()
 
     # Initialisation du système RAG
-    rag_system = RAGSystem(llm_model=args.llm, device=args.device, use_openai_endpoint=args.use_openai, debug=args.debug)
+    rag_system = RAGSystem(llm_model=args.llm, device=args.device, force_local_llm=args.force_local_llm, debug=args.debug)
 
     # Chargement de la base de connaissances
     if args.kb:
