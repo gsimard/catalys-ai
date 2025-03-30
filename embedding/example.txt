@@ -1,0 +1,5 @@
+Bonjour, comment allez-vous aujourd'hui?
+Le modèle bge-m3 est un modèle d'embedding multilingue très performant.
+Les embeddings sont des représentations vectorielles du texte utilisées en NLP.
+Ce fichier contient plusieurs phrases pour tester la génération d'embeddings.
+Nous pouvons comparer la similarité entre différentes phrases grâce aux embeddings.
