@@ -62,8 +62,19 @@ def search(query, texts, sources, embeddings, generator, top_k=5):
     # Génération de l'embedding pour la requête
     query_embedding = generator.generate_embeddings([query])[0]
     
-    # Calcul des similarités
-    similarities = np.dot(embeddings, query_embedding)
+    print("Recherche des documents pertinents...")
+    from tqdm import tqdm
+    
+    # Calcul des similarités avec barre de progression
+    # Diviser le calcul en batches pour montrer la progression
+    batch_size = 1000  # Taille de batch adaptée
+    similarities = np.zeros(len(embeddings))
+    
+    for i in tqdm(range(0, len(embeddings), batch_size), 
+                 desc="Recherche de documents", unit="batch"):
+        end_idx = min(i + batch_size, len(embeddings))
+        batch_embeddings = embeddings[i:end_idx]
+        similarities[i:end_idx] = np.dot(batch_embeddings, query_embedding)
     
     # Récupération des indices des documents les plus similaires
     top_indices = np.argsort(similarities)[-top_k:][::-1]
