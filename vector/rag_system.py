@@ -287,10 +287,10 @@ Réponse:"""
         response = "Impossible de générer une réponse."
 
         # Fonction pour animer un curseur tournant
-        def spinning_cursor():
+        def spinning_cursor(stop_event):
             spinner = ['|', '/', '-', '\\']
             i = 0
-            while True:
+            while not stop_event.is_set():
                 sys.stdout.write('\r' + spinner[i % len(spinner)])
                 sys.stdout.flush()
                 i += 1
@@ -303,9 +303,7 @@ Réponse:"""
                 
                 # Démarrer l'animation du curseur dans un thread séparé
                 stop_spinner = threading.Event()
-                spinner_thread = threading.Thread(target=lambda: (
-                    spinning_cursor() if not stop_spinner.is_set() else None
-                ))
+                spinner_thread = threading.Thread(target=spinning_cursor, args=(stop_spinner,))
                 spinner_thread.daemon = True  # Le thread s'arrêtera quand le programme principal se termine
                 spinner_thread.start()
                 
@@ -336,9 +334,7 @@ Réponse:"""
             
             # Démarrer l'animation du curseur dans un thread séparé
             stop_spinner = threading.Event()
-            spinner_thread = threading.Thread(target=lambda: (
-                spinning_cursor() if not stop_spinner.is_set() else None
-            ))
+            spinner_thread = threading.Thread(target=spinning_cursor, args=(stop_spinner,))
             spinner_thread.daemon = True
             spinner_thread.start()
             
