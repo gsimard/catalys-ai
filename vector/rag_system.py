@@ -1,9 +1,13 @@
 import os
 import numpy as np
+import os
+import numpy as np
 import json
 import argparse
 from bge_embeddings import EmbeddingGenerator
 import torch
+from dotenv import load_dotenv
+import openai
 
 # Vérification de la disponibilité de transformers
 try:
@@ -11,43 +15,76 @@ try:
     TRANSFORMERS_AVAILABLE = True
 except ImportError:
     TRANSFORMERS_AVAILABLE = False
-    print("Le package transformers n'est pas installé. La génération de réponses ne sera pas disponible.")
+    print("Le package transformers n'est pas installé. La génération de réponses avec un LLM local ne sera pas disponible.")
 
+# Charger les variables d'environnement depuis un fichier .env s'il existe
+load_dotenv()
 
 class RAGSystem:
-    def __init__(self, embedding_model="BAAI/bge-m3", llm_model="meta-llama/Llama-2-7b-chat-hf", device=None):
+    def __init__(self, embedding_model="BAAI/bge-m3", llm_model="meta-llama/Llama-2-7b-chat-hf", device=None, use_openai_endpoint=False):
         """
-        Initialise le système RAG avec un modèle d'embedding et un LLM.
-        
+        Initialise le système RAG avec un modèle d'embedding et un LLM (local ou via API OpenAI).
+
         Args:
-            embedding_model: Modèle d'embedding à utiliser
-            llm_model: Modèle de langage à utiliser
-            device: Appareil sur lequel exécuter les modèles
+            embedding_model: Modèle d'embedding à utiliser.
+            llm_model: Modèle de langage local à utiliser (si use_openai_endpoint=False).
+            device: Appareil sur lequel exécuter les modèles locaux.
+            use_openai_endpoint: Si True, utilise l'endpoint OpenAI configuré via les variables d'environnement.
         """
         if device is None:
             self.device = "cuda" if torch.cuda.is_available() else "cpu"
         else:
             self.device = device
-            
-        print(f"Initialisation du système RAG sur {self.device}...")
-        
+
+        print(f"Initialisation du système RAG...")
+        print(f"Utilisation du device: {self.device} pour les embeddings.")
+
         # Chargement du générateur d'embeddings
         self.embedding_generator = EmbeddingGenerator(model_name=embedding_model, device=self.device)
-        
-        # Chargement du LLM si disponible
+
+        # Configuration du LLM
         self.llm = None
         self.tokenizer_llm = None
-        
-        if TRANSFORMERS_AVAILABLE:
+        self.openai_client = None
+        self.openai_model = None
+        self.use_openai = False
+
+        # Vérifier si on doit utiliser l'endpoint OpenAI
+        nebius_api_base = os.getenv("NEBIUS_API_BASE")
+        nebius_api_key = os.getenv("NEBIUS_API_KEY")
+        nebius_model = os.getenv("NEBIUS_AI_MODEL")
+
+        if use_openai_endpoint and nebius_api_base and nebius_api_key and nebius_model:
+            print(f"Configuration de l'endpoint OpenAI/Nebius: {nebius_api_base}")
             try:
-                print(f"Chargement du LLM {llm_model}...")
-                self.tokenizer_llm = AutoTokenizer.from_pretrained(llm_model)
-                self.llm = AutoModelForCausalLM.from_pretrained(llm_model).to(self.device)
-                print("LLM chargé avec succès!")
+                self.openai_client = openai.OpenAI(
+                    base_url=nebius_api_base,
+                    api_key=nebius_api_key,
+                )
+                self.openai_model = nebius_model
+                self.use_openai = True
+                print(f"Client OpenAI initialisé pour le modèle: {self.openai_model}")
             except Exception as e:
-                print(f"Erreur lors du chargement du LLM: {e}")
-                print("Le système fonctionnera en mode recherche seulement.")
+                print(f"Erreur lors de l'initialisation du client OpenAI: {e}")
+                print("Retour à l'utilisation du LLM local si possible.")
+                self.use_openai = False
         
+        # Si on n'utilise pas OpenAI, essayer de charger le LLM local
+        if not self.use_openai:
+            if TRANSFORMERS_AVAILABLE:
+                print(f"Tentative de chargement du LLM local {llm_model} sur {self.device}...")
+                try:
+                    self.tokenizer_llm = AutoTokenizer.from_pretrained(llm_model)
+                    # Charger le modèle sur le CPU si CUDA n'est pas disponible ou si device est 'cpu'
+                    model_device = self.device if self.device.startswith("cuda") else "cpu" 
+                    self.llm = AutoModelForCausalLM.from_pretrained(llm_model).to(model_device)
+                    print(f"LLM local chargé avec succès sur {model_device}!")
+                except Exception as e:
+                    print(f"Erreur lors du chargement du LLM local: {e}")
+                    print("La génération de réponses ne sera pas disponible.")
+            else:
+                 print("Transformers non disponible et endpoint OpenAI non configuré. Génération de réponses impossible.")
+
         # Base de connaissances
         self.kb_texts = []
         self.kb_sources = []
@@ -166,12 +203,8 @@ class RAGSystem:
             max_length: Longueur maximale de la réponse
             
         Returns:
-            Réponse générée
+            Tuple: (Réponse générée, Liste des documents pertinents)
         """
-        # Vérification de la disponibilité du LLM
-        if not TRANSFORMERS_AVAILABLE or self.llm is None:
-            raise ValueError("Le LLM n'est pas disponible. Installez transformers et chargez un modèle.")
-        
         # Récupération des documents pertinents
         relevant_docs = self.retrieve(query, top_k=top_k)
         
@@ -185,26 +218,68 @@ class RAGSystem:
 Question: {query}
 
 Réponse:"""
-        
-        # Tokenisation
-        inputs = self.tokenizer_llm(prompt, return_tensors="pt").to(self.device)
-        
-        # Génération
-        with torch.no_grad():
-            outputs = self.llm.generate(
-                **inputs,
-                max_length=max_length,
-                num_return_sequences=1,
-                temperature=0.7,
-                top_p=0.9,
-            )
-        
-        # Décodage
-        response = self.tokenizer_llm.decode(outputs[0], skip_special_tokens=True)
-        
-        # Extraction de la réponse (après "Réponse:")
-        response = response.split("Réponse:")[-1].strip()
-        
+
+        response = "Impossible de générer une réponse."
+
+        if self.use_openai and self.openai_client:
+            # Génération via API OpenAI
+            try:
+                print("Génération via l'API OpenAI...")
+                chat_completion = self.openai_client.chat.completions.create(
+                    model=self.openai_model,
+                    messages=[
+                        {"role": "system", "content": "Tu es un assistant IA qui répond aux questions en se basant sur le contexte fourni."},
+                        {"role": "user", "content": prompt}
+                    ],
+                    max_tokens=max_length,
+                    temperature=0.7,
+                )
+                response = chat_completion.choices[0].message.content.strip()
+            except Exception as e:
+                print(f"Erreur lors de l'appel à l'API OpenAI: {e}")
+                response = f"Erreur lors de la génération via API: {e}"
+
+        elif self.llm and self.tokenizer_llm:
+             # Génération via LLM local
+            print("Génération via le LLM local...")
+             # S'assurer que les inputs sont sur le bon device (CPU ou CUDA)
+            model_device = self.llm.device
+            inputs = self.tokenizer_llm(prompt, return_tensors="pt").to(model_device)
+
+            # Génération
+            with torch.no_grad():
+                outputs = self.llm.generate(
+                    **inputs,
+                    max_length=inputs['input_ids'].shape[1] + max_length, # Ajuster max_length
+                    num_return_sequences=1,
+                    temperature=0.7,
+                    top_p=0.9,
+                    pad_token_id=self.tokenizer_llm.eos_token_id # Éviter les warnings
+                )
+
+            # Décodage
+            # S'assurer de décoder seulement les nouveaux tokens générés
+            output_text = self.tokenizer_llm.decode(outputs[0], skip_special_tokens=True)
+            
+            # Extraction de la réponse (après "Réponse:")
+            # Trouver la dernière occurrence pour éviter les problèmes si "Réponse:" est dans le contexte
+            response_marker = "Réponse:"
+            marker_index = output_text.rfind(response_marker)
+            if marker_index != -1:
+                response = output_text[marker_index + len(response_marker):].strip()
+            else:
+                # Fallback si le marqueur n'est pas trouvé (peut arriver avec certains modèles)
+                # On prend ce qui suit le prompt original
+                prompt_lines = prompt.count('\n') + 1
+                response_lines = output_text.split('\n')
+                if len(response_lines) > prompt_lines:
+                     response = "\n".join(response_lines[prompt_lines:]).strip()
+                else: # Si le modèle n'a rien ajouté ou a mal formaté
+                     response = output_text # Retourner tout pour inspection
+
+        else:
+            raise ValueError("Aucun LLM (local ou distant) n'est configuré ou disponible pour la génération.")
+
         return response, relevant_docs
 
 
@@ -214,10 +289,12 @@ def main():
     parser.add_argument("--device", type=str, default=None, 
                         help="Appareil à utiliser (cpu, cuda, cuda:0, etc.)")
     parser.add_argument("--llm", type=str, default="meta-llama/Llama-2-7b-chat-hf",
-                        help="Modèle de langage à utiliser")
-    parser.add_argument("--interactive", action="store_true", 
+                        help="Modèle de langage local à utiliser (ignoré si --use-openai)")
+    parser.add_argument("--use-openai", action="store_true",
+                        help="Utiliser l'endpoint OpenAI/Nebius configuré via les variables d'environnement")
+    parser.add_argument("--interactive", action="store_true",
                         help="Mode interactif")
-    parser.add_argument("--query", type=str, 
+    parser.add_argument("--query", type=str,
                         help="Requête à traiter (mode non interactif)")
     parser.add_argument("--search-only", action="store_true",
                         help="Mode recherche seulement (sans génération)")
@@ -225,10 +302,10 @@ def main():
                         help="Nombre de documents à récupérer")
     
     args = parser.parse_args()
-    
+
     # Initialisation du système RAG
-    rag_system = RAGSystem(llm_model=args.llm, device=args.device)
-    
+    rag_system = RAGSystem(llm_model=args.llm, device=args.device, use_openai_endpoint=args.use_openai)
+
     # Chargement de la base de connaissances
     if args.kb:
         if args.kb.endswith('.json'):
@@ -248,10 +325,15 @@ def main():
             query = input("\nQuestion: ")
             if query.lower() == 'exit':
                 break
-                
             try:
-                # Mode recherche seulement
-                if args.search_only or not TRANSFORMERS_AVAILABLE or rag_system.llm is None:
+                # Déterminer si la génération est possible
+                generation_possible = rag_system.use_openai or (TRANSFORMERS_AVAILABLE and rag_system.llm is not None)
+
+                # Mode recherche seulement ou si la génération n'est pas possible
+                if args.search_only or not generation_possible:
+                    if not generation_possible and not args.search_only:
+                         print("\nAvertissement: Génération impossible (LLM non chargé ou non configuré). Affichage des résultats de recherche seulement.")
+                    
                     docs = rag_system.retrieve(query, top_k=args.top_k)
                     
                     print("\nDocuments pertinents:")
@@ -274,8 +356,14 @@ def main():
     # Mode non interactif
     elif args.query:
         try:
-            # Mode recherche seulement
-            if args.search_only or not TRANSFORMERS_AVAILABLE or rag_system.llm is None:
+            # Déterminer si la génération est possible
+            generation_possible = rag_system.use_openai or (TRANSFORMERS_AVAILABLE and rag_system.llm is not None)
+
+            # Mode recherche seulement ou si la génération n'est pas possible
+            if args.search_only or not generation_possible:
+                if not generation_possible and not args.search_only:
+                    print("\nAvertissement: Génération impossible (LLM non chargé ou non configuré). Affichage des résultats de recherche seulement.")
+                
                 docs = rag_system.retrieve(args.query, top_k=args.top_k)
                 
                 print("\nDocuments pertinents:")
