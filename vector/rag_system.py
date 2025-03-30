@@ -88,6 +88,7 @@ class RAGSystem:
         # Base de connaissances
         self.kb_texts = []
         self.kb_sources = []
+        self.kb_chunk_ids = [] # Ajout pour stocker les IDs des chunks
         self.kb_embeddings = None
         
     def load_knowledge_base(self, kb_file):
@@ -151,12 +152,13 @@ class RAGSystem:
         
         with open(json_file, 'r', encoding='utf-8') as f:
             documents = json.load(f)
-        
-        self.kb_texts = [doc["content"] for doc in documents]
-        self.kb_sources = [doc["source"] for doc in documents]
-        
+        # Extraire les données, en gérant l'absence potentielle de chunk_id
+        self.kb_texts = [doc.get("content", "") for doc in documents]
+        self.kb_sources = [doc.get("source", "Inconnue") for doc in documents]
+        self.kb_chunk_ids = [doc.get("chunk_id", -1) for doc in documents] # Charger chunk_id, avec -1 par défaut
+
         # Si les embeddings sont déjà dans le fichier JSON
-        if "embedding" in documents[0]:
+        if documents and "embedding" in documents[0]:
             self.kb_embeddings = np.array([doc["embedding"] for doc in documents])
             print(f"Embeddings chargés depuis le fichier JSON pour {len(self.kb_texts)} documents.")
         else:
@@ -187,9 +189,11 @@ class RAGSystem:
         
         # Récupération des indices des documents les plus similaires
         top_indices = np.argsort(similarities)[-top_k:][::-1]
-        
-        # Récupération des documents et de leurs scores
-        top_docs = [(self.kb_texts[i], self.kb_sources[i], similarities[i]) for i in top_indices]
+        # Récupération des documents, sources, scores et chunk_ids
+        top_docs = [
+            (self.kb_texts[i], self.kb_sources[i], similarities[i], self.kb_chunk_ids[i]) 
+            for i in top_indices
+        ]
         
         return top_docs
         
@@ -337,19 +341,21 @@ def main():
                     docs = rag_system.retrieve(query, top_k=args.top_k)
                     
                     print("\nDocuments pertinents:")
-                    for i, (doc, source, score) in enumerate(docs):
-                        print(f"{i+1}. [{score:.4f}] Source: {source}")
-                        print(f"   {doc[:200]}...")
+                    for i, (doc, source, score, chunk_id) in enumerate(docs):
+                        print(f"{i+1}. [{score:.4f}] Source: {source} (Chunk ID: {chunk_id})")
+                        print(f"   Contenu: {doc}") # Affichage complet
+                        print("-" * 20) # Séparateur
                 # Mode RAG complet
                 else:
                     response, docs = rag_system.generate(query, top_k=args.top_k)
                     
-                    print("\nDocuments pertinents:")
-                    for i, (doc, source, score) in enumerate(docs):
-                        print(f"{i+1}. [{score:.4f}] Source: {source}")
-                        print(f"   {doc[:200]}...")
+                    print("\nDocuments pertinents utilisés pour la réponse:")
+                    for i, (doc, source, score, chunk_id) in enumerate(docs):
+                        print(f"{i+1}. [{score:.4f}] Source: {source} (Chunk ID: {chunk_id})")
+                        print(f"   Contenu: {doc}") # Affichage complet
+                        print("-" * 20) # Séparateur
                         
-                    print(f"\nRéponse: {response}")
+                    print(f"\nRéponse:\n{response}")
             except Exception as e:
                 print(f"Erreur: {e}")
     
@@ -367,19 +373,21 @@ def main():
                 docs = rag_system.retrieve(args.query, top_k=args.top_k)
                 
                 print("\nDocuments pertinents:")
-                for i, (doc, source, score) in enumerate(docs):
-                    print(f"{i+1}. [{score:.4f}] Source: {source}")
-                    print(f"   {doc[:200]}...")
+                for i, (doc, source, score, chunk_id) in enumerate(docs):
+                    print(f"{i+1}. [{score:.4f}] Source: {source} (Chunk ID: {chunk_id})")
+                    print(f"   Contenu: {doc}") # Affichage complet
+                    print("-" * 20) # Séparateur
             # Mode RAG complet
             else:
                 response, docs = rag_system.generate(args.query, top_k=args.top_k)
                 
-                print("\nDocuments pertinents:")
-                for i, (doc, source, score) in enumerate(docs):
-                    print(f"{i+1}. [{score:.4f}] Source: {source}")
-                    print(f"   {doc[:200]}...")
+                print("\nDocuments pertinents utilisés pour la réponse:")
+                for i, (doc, source, score, chunk_id) in enumerate(docs):
+                    print(f"{i+1}. [{score:.4f}] Source: {source} (Chunk ID: {chunk_id})")
+                    print(f"   Contenu: {doc}") # Affichage complet
+                    print("-" * 20) # Séparateur
                     
-                print(f"\nRéponse: {response}")
+                print(f"\nRéponse:\n{response}")
         except Exception as e:
             print(f"Erreur: {e}")
     
