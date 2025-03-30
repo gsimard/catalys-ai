@@ -41,41 +41,68 @@ def extract_text_from_pdf(pdf_path):
         Texte extrait du PDF
     """
     text = ""
+    errors = []
     
-    # Méthode 1: pdfminer.six (si disponible)
-    if PDFMINER_AVAILABLE:
-        try:
-            text = pdfminer_extract_text(pdf_path)
-            if len(text.strip()) > 100:  # Si on a extrait suffisamment de texte
-                return clean_text(text)
-        except Exception as e:
-            print(f"Erreur lors de l'extraction avec pdfminer: {e}")
-    
-    # Méthode 2: PyPDF2 (si disponible)
+    # Méthode 1: PyPDF2 (si disponible)
     if PYPDF2_AVAILABLE:
         try:
             text_pypdf = ""
             with open(pdf_path, 'rb') as file:
                 pdf_reader = PyPDF2.PdfReader(file)
+                if pdf_reader.is_encrypted:
+                    print(f"Le PDF {pdf_path} est crypté, tentative de déchiffrement...")
+                    try:
+                        # Essayer avec un mot de passe vide
+                        success = pdf_reader.decrypt('')
+                        if not success:
+                            print(f"Impossible de déchiffrer le PDF {pdf_path}")
+                    except:
+                        print(f"Erreur lors de la tentative de déchiffrement du PDF {pdf_path}")
+                
                 for page_num in range(len(pdf_reader.pages)):
-                    page = pdf_reader.pages[page_num]
-                    text_pypdf += page.extract_text() + "\n\n"
+                    try:
+                        page = pdf_reader.pages[page_num]
+                        page_text = page.extract_text()
+                        if page_text:
+                            text_pypdf += page_text + "\n\n"
+                    except Exception as e:
+                        print(f"Erreur lors de l'extraction de la page {page_num} de {pdf_path}: {str(e)}")
             
-            if len(text_pypdf.strip()) > len(text.strip()):
+            if text_pypdf.strip():
                 text = text_pypdf
-                if len(text.strip()) > 100:  # Si on a extrait suffisamment de texte
-                    return clean_text(text)
+                print(f"Texte extrait avec succès de {pdf_path} en utilisant PyPDF2")
+                return clean_text(text)
         except Exception as e:
-            print(f"Erreur lors de l'extraction avec PyPDF2: {e}")
+            errors.append(f"PyPDF2: {str(e)}")
+    
+    # Méthode 2: pdfminer.six (si disponible)
+    if PDFMINER_AVAILABLE and not text.strip():
+        try:
+            text_pdfminer = pdfminer_extract_text(pdf_path)
+            if text_pdfminer.strip():
+                text = text_pdfminer
+                print(f"Texte extrait avec succès de {pdf_path} en utilisant pdfminer.six")
+                return clean_text(text)
+        except Exception as e:
+            errors.append(f"pdfminer.six: {str(e)}")
     
     # Méthode 3: OCR (si disponible et nécessaire)
-    if OCR_AVAILABLE and len(text.strip()) < 100:
+    if OCR_AVAILABLE and not text.strip():
         try:
             text_ocr = extract_text_from_scanned_pdf(pdf_path)
-            if len(text_ocr.strip()) > len(text.strip()):
+            if text_ocr.strip():
                 text = text_ocr
+                print(f"Texte extrait avec succès de {pdf_path} en utilisant OCR")
+                return clean_text(text)
         except Exception as e:
-            print(f"Erreur lors de l'OCR: {e}")
+            errors.append(f"OCR: {str(e)}")
+    
+    # Si aucune méthode n'a fonctionné
+    if not text.strip():
+        error_msg = "Aucune méthode d'extraction n'a réussi à extraire du texte."
+        if errors:
+            error_msg += f" Erreurs: {'; '.join(errors)}"
+        raise Exception(error_msg)
     
     return clean_text(text)
 
@@ -186,20 +213,45 @@ def process_file(file_path, chunk_size=512, overlap=50):
             if not PYPDF2_AVAILABLE and not PDFMINER_AVAILABLE:
                 print(f"Impossible de traiter le PDF {file_path}. Installez PyPDF2 ou pdfminer.six.")
                 return []
-            content = extract_text_from_pdf(file_path)
+            
+            try:
+                content = extract_text_from_pdf(file_path)
+                if not content.strip():
+                    print(f"Attention: Aucun texte n'a pu être extrait de {file_path}")
+                    return []
+            except Exception as e:
+                print(f"Erreur lors de l'extraction du texte de {file_path}: {str(e)}")
+                return []
         else:
             # Pour les fichiers texte
-            with open(file_path, 'r', encoding='utf-8') as f:
-                content = f.read()
+            try:
+                with open(file_path, 'r', encoding='utf-8') as f:
+                    content = f.read()
+            except UnicodeDecodeError:
+                # Essayer avec une autre encodage
+                try:
+                    with open(file_path, 'r', encoding='latin-1') as f:
+                        content = f.read()
+                except Exception as e:
+                    print(f"Erreur lors de la lecture de {file_path} avec encodage latin-1: {str(e)}")
+                    return []
+            except Exception as e:
+                print(f"Erreur lors de la lecture de {file_path}: {str(e)}")
+                return []
         
         # Si le contenu est vide, retourner une liste vide
         if not content.strip():
             print(f"Attention: {file_path} ne contient pas de texte exploitable.")
             return []
         
-        return chunk_text(content, chunk_size, overlap)
+        chunks = chunk_text(content, chunk_size, overlap)
+        if not chunks:
+            print(f"Attention: Aucun chunk n'a pu être créé à partir de {file_path}")
+        return chunks
     except Exception as e:
-        print(f"Erreur lors du traitement de {file_path}: {e}")
+        print(f"Erreur lors du traitement de {file_path}: {str(e)}")
+        import traceback
+        traceback.print_exc()  # Affiche la trace complète pour le débogage
         return []
 
 
@@ -219,8 +271,29 @@ def main():
                         help="Extensions de fichiers à traiter (séparées par des virgules)")
     parser.add_argument("--skip-embeddings", action="store_true",
                         help="Ne pas générer les embeddings (utile pour le débogage)")
+    parser.add_argument("--debug", action="store_true",
+                        help="Mode débogage avec plus d'informations")
     
     args = parser.parse_args()
+    
+    # Mode débogage
+    if args.debug:
+        import traceback
+        print("Mode débogage activé")
+        
+        # Activer le mode débogage
+        def process_file_with_debug(file_path, chunk_size=512, overlap=50):
+            try:
+                return process_file(file_path, chunk_size, overlap)
+            except Exception as e:
+                print(f"ERREUR CRITIQUE lors du traitement de {file_path}:")
+                traceback.print_exc()
+                return []
+        
+        # Remplacer la fonction process_file par la version avec débogage
+        global process_file
+        original_process_file = process_file
+        process_file = process_file_with_debug
     
     # Conversion des extensions
     extensions = args.extensions.split(',')
@@ -256,6 +329,15 @@ def main():
             })
     
     print(f"Nombre total de chunks: {len(documents)}")
+    
+    # Vérification si des documents ont été traités
+    if not documents:
+        print("Aucun document n'a pu être traité. Vérifiez les messages d'erreur ci-dessus.")
+        # Sauvegarde d'un fichier JSON vide
+        with open(args.output, 'w', encoding='utf-8') as f:
+            json.dump([], f, ensure_ascii=False, indent=2)
+        print(f"Fichier JSON vide créé: {args.output}")
+        return
     
     # Génération des embeddings
     if not args.skip_embeddings:
