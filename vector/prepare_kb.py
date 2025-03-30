@@ -4,6 +4,7 @@ import json
 import re
 import pickle # Ajout de pickle
 import numpy as np # Ajout de numpy
+from tqdm import tqdm # Ajout de tqdm
 from bge_embeddings import EmbeddingGenerator
 
 # Vérification de la disponibilité de PyPDF2
@@ -374,14 +375,19 @@ def main():
     if os.path.isdir(args.input):
         print(f"Traitement du répertoire {args.input}...")
         
+        # Collecter tous les fichiers à traiter d'abord
+        files_to_process = []
         for root, _, files in os.walk(args.input):
             for file in files:
                 if any(file.endswith(ext) for ext in extensions):
-                    file_path = os.path.join(root, file)
-                    print(f"Traitement de {file_path}...")
-                    chunks = process_file(file_path, args.chunk_size, args.overlap)
-                    
-                    for i, chunk in enumerate(chunks):
+                    files_to_process.append(os.path.join(root, file))
+        
+        # Traiter les fichiers avec une barre de progression
+        for file_path in tqdm(files_to_process, desc="Traitement des fichiers"):
+            # print(f"Traitement de {file_path}...") # Remplacé par tqdm
+            chunks = process_file(file_path, args.chunk_size, args.overlap)
+            
+            for i, chunk in enumerate(chunks):
                         documents.append({
                             "source": file_path,
                             "chunk_id": i,

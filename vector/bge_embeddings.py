@@ -4,6 +4,7 @@ import argparse
 import json
 import pickle # Ajout de pickle
 import numpy as np
+from tqdm import tqdm # Ajout de tqdm
 
 class EmbeddingGenerator:
     def __init__(self, model_name="BAAI/bge-m3", device=None):
@@ -44,11 +45,12 @@ class EmbeddingGenerator:
             Tableau numpy des embeddings normalisés
         """
         embeddings = []
-        
-        # Traitement par batch pour économiser la mémoire
-        for i in range(0, len(texts), batch_size):
+        num_batches = (len(texts) + batch_size - 1) // batch_size # Calcul du nombre de batches
+
+        # Traitement par batch avec barre de progression
+        for i in tqdm(range(0, len(texts), batch_size), total=num_batches, desc="Génération Embeddings"):
             batch = texts[i:i+batch_size]
-            
+
             # Tokenisation
             inputs = self.tokenizer(batch, padding=True, truncation=True, 
                                    max_length=512, return_tensors="pt").to(self.device)
