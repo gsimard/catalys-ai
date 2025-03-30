@@ -224,6 +224,8 @@ Question: {query}
 
 Réponse:"""
 
+        print(f"\n--- Prompt envoyé au LLM ---\n{prompt}\n---------------------------\n") # Ajout de l'impression du prompt
+
         response = "Impossible de générer une réponse."
 
         if self.use_openai and self.openai_client:
