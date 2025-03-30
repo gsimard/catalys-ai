@@ -192,7 +192,74 @@ def chunk_text(text, chunk_size=512, overlap=50):
         chunks.append(text[start:end].strip())
         start = end - overlap
     
+    # Ensure the last part is included if it's smaller than overlap
+    if start < len(text):
+        chunks.append(text[start:].strip())
+        
     return chunks
+
+
+def chunk_text(text, chunk_size=512, overlap=50):
+    """
+    Découpe un texte en chunks de taille fixe avec chevauchement (version générateur).
+    
+    Args:
+        text: Texte à découper
+        chunk_size: Taille des chunks (en caractères)
+        overlap: Chevauchement entre les chunks
+        
+    Yields:
+        Chunks de texte
+    """
+    if not text: # Handle empty text case
+        return
+
+    start = 0
+    text_len = len(text)
+    
+    while start < text_len:
+        end = min(start + chunk_size, text_len)
+        
+        # Si ce n'est pas le dernier chunk, essayer de couper à un espace ou une nouvelle ligne
+        # pour éviter de couper en plein milieu d'un mot.
+        if end < text_len:
+            # Chercher le dernier espace ou retour à la ligne dans la fenêtre [end-overlap, end]
+            split_pos = -1
+            # Prioritize newline, then space
+            last_newline = text.rfind('\n', max(0, end - overlap), end)
+            last_space = text.rfind(' ', max(0, end - overlap), end)
+            
+            split_pos = max(last_newline, last_space)
+
+            # If a split point is found and it's after the start, use it
+            if split_pos != -1 and split_pos > start:
+                end = split_pos + 1 # Include the space/newline in the previous chunk for context? Or end = split_pos? Let's try end = split_pos
+            # If no suitable split point found, just cut at chunk_size
+            # (This part is implicitly handled by end = min(start + chunk_size, text_len))
+
+        chunk = text[start:end].strip()
+        if chunk: # Yield only non-empty chunks
+            yield chunk
+        
+        # Calculer le prochain début
+        next_start = start + chunk_size - overlap
+        
+        # Assurer la progression pour éviter une boucle infinie si overlap >= chunk_size
+        # ou si end ne bouge pas.
+        if next_start <= start:
+             # Si end n'a pas pu être ajusté (e.g. très longue ligne sans espace/retour),
+             # forcer la progression au-delà du chunk actuel.
+             if end == start + chunk_size:
+                 next_start = end
+             else: # Sinon, avancer d'au moins un caractère
+                 next_start = start + 1 
+
+        start = next_start
+        
+        # Safety break if start doesn't advance significantly (should not happen with above logic)
+        # This indicates a potential logic error we need to fix if it occurs.
+        if start >= text_len:
+             break
 
 
 def process_file(file_path, chunk_size=512, overlap=50):
@@ -244,7 +311,8 @@ def process_file(file_path, chunk_size=512, overlap=50):
             print(f"Attention: {file_path} ne contient pas de texte exploitable.")
             return []
         
-        chunks = chunk_text(content, chunk_size, overlap)
+        # Utiliser list() pour collecter les chunks du générateur
+        chunks = list(chunk_text(content, chunk_size, overlap))
         if not chunks:
             print(f"Attention: Aucun chunk n'a pu être créé à partir de {file_path}")
         return chunks
@@ -343,6 +411,7 @@ def main():
     if not args.skip_embeddings:
         print("Génération des embeddings...")
         generator = EmbeddingGenerator(device=args.device)
+        print(f"EmbeddingGenerator utilise le périphérique: {generator.device}") # Ajout pour vérification
         
         texts = [doc["content"] for doc in documents]
         embeddings = generator.generate_embeddings(texts)
