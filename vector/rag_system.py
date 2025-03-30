@@ -213,7 +213,8 @@ class RAGSystem:
         relevant_docs = self.retrieve(query, top_k=top_k)
         
         # Construction du contexte
-        context = "\n\n".join([doc for doc, _, _ in relevant_docs])
+        # On ne prend que le premier élément (le texte du chunk) de chaque tuple retourné par retrieve
+        context = "\n\n".join([doc for doc, _, _, _ in relevant_docs])
         
         # Construction du prompt
         prompt = f"""Contexte:
