@@ -1,10 +1,11 @@
 import os
 import numpy as np
-import os
-import numpy as np
 import json
 import pickle # Ajout de pickle
 import argparse
+import threading
+import time
+import sys
 from bge_embeddings import EmbeddingGenerator
 import torch
 from dotenv import load_dotenv
@@ -285,30 +286,66 @@ Réponse:"""
 
         response = "Impossible de générer une réponse."
 
+        # Fonction pour animer un curseur tournant
+        def spinning_cursor():
+            spinner = ['|', '/', '-', '\\']
+            i = 0
+            while True:
+                sys.stdout.write('\r' + spinner[i % len(spinner)])
+                sys.stdout.flush()
+                i += 1
+                time.sleep(0.1)
+
         if self.use_openai and self.openai_client:
             # Génération via API OpenAI
             try:
-                print("Génération via l'API OpenAI...")
-                chat_completion = self.openai_client.chat.completions.create(
-                    model=self.openai_model,
-                    messages=[
-                        {"role": "system", "content": "Tu es un assistant IA qui répond aux questions en se basant sur le contexte fourni."},
-                        {"role": "user", "content": prompt}
-                    ],
-                    max_tokens=max_length,
-                    temperature=0.7,
-                )
-                response = chat_completion.choices[0].message.content.strip()
+                print("Génération via l'API OpenAI...", end='')
+                
+                # Démarrer l'animation du curseur dans un thread séparé
+                stop_spinner = threading.Event()
+                spinner_thread = threading.Thread(target=lambda: (
+                    spinning_cursor() if not stop_spinner.is_set() else None
+                ))
+                spinner_thread.daemon = True  # Le thread s'arrêtera quand le programme principal se termine
+                spinner_thread.start()
+                
+                try:
+                    chat_completion = self.openai_client.chat.completions.create(
+                        model=self.openai_model,
+                        messages=[
+                            {"role": "system", "content": "Tu es un assistant IA qui répond aux questions en se basant sur le contexte fourni."},
+                            {"role": "user", "content": prompt}
+                        ],
+                        max_tokens=max_length,
+                        temperature=0.7,
+                    )
+                    response = chat_completion.choices[0].message.content.strip()
+                finally:
+                    # Arrêter l'animation du curseur
+                    stop_spinner.set()
+                    sys.stdout.write('\r')  # Effacer le curseur
+                    sys.stdout.flush()
+                    print("Réponse reçue!                ")  # Espaces pour effacer tout reste du spinner
             except Exception as e:
-                print(f"Erreur lors de l'appel à l'API OpenAI: {e}")
+                print(f"\rErreur lors de l'appel à l'API OpenAI: {e}")
                 response = f"Erreur lors de la génération via API: {e}"
 
         elif self.llm and self.tokenizer_llm:
-             # Génération via LLM local
-            print("Génération via le LLM local...")
-             # S'assurer que les inputs sont sur le bon device (CPU ou CUDA)
-            model_device = self.llm.device
-            inputs = self.tokenizer_llm(prompt, return_tensors="pt").to(model_device)
+            # Génération via LLM local
+            print("Génération via le LLM local...", end='')
+            
+            # Démarrer l'animation du curseur dans un thread séparé
+            stop_spinner = threading.Event()
+            spinner_thread = threading.Thread(target=lambda: (
+                spinning_cursor() if not stop_spinner.is_set() else None
+            ))
+            spinner_thread.daemon = True
+            spinner_thread.start()
+            
+            try:
+                # S'assurer que les inputs sont sur le bon device (CPU ou CUDA)
+                model_device = self.llm.device
+                inputs = self.tokenizer_llm(prompt, return_tensors="pt").to(model_device)
 
             # Génération
             with torch.no_grad():
@@ -324,6 +361,13 @@ Réponse:"""
             # Décodage
             # S'assurer de décoder seulement les nouveaux tokens générés
             output_text = self.tokenizer_llm.decode(outputs[0], skip_special_tokens=True)
+            
+            finally:
+                # Arrêter l'animation du curseur
+                stop_spinner.set()
+                sys.stdout.write('\r')  # Effacer le curseur
+                sys.stdout.flush()
+                print("Réponse reçue!                ")  # Espaces pour effacer tout reste du spinner
             
             # Extraction de la réponse (après "Réponse:")
             # Trouver la dernière occurrence pour éviter les problèmes si "Réponse:" est dans le contexte
