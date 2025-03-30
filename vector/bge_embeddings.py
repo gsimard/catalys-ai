@@ -22,9 +22,13 @@ class EmbeddingGenerator:
             
         print(f"Chargement du modèle {model_name} sur {self.device}...")
         
-        # Chargement du tokenizer et du modèle
-        self.tokenizer = AutoTokenizer.from_pretrained(model_name)
-        self.model = AutoModel.from_pretrained(model_name).to(self.device)
+        # Chargement du tokenizer et du modèle avec barre de progression
+        from tqdm import tqdm
+        with tqdm(total=2, desc="Chargement du modèle") as pbar:
+            self.tokenizer = AutoTokenizer.from_pretrained(model_name)
+            pbar.update(1)
+            self.model = AutoModel.from_pretrained(model_name).to(self.device)
+            pbar.update(1)
         
         print(f"Modèle chargé avec succès!")
         
