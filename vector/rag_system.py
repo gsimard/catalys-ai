@@ -451,8 +451,8 @@ def main():
                         print("-" * 20) # Séparateur
                         
                     print(f"\nRéponse:\n{response}")
-            except Exception as e:
-                print(f"Erreur: {e}")
+        except Exception as e:
+            print(f"Erreur: {e}")
     
     # Mode non interactif
     elif args.query:
