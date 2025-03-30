@@ -110,3 +110,7 @@ ENV/
 
 # Pickle files (can be large)
 *.pkl
+chromadb/
+vector/docs/
+vector/mes_documents/
+.rag_chroma_history
