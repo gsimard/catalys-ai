@@ -5,6 +5,7 @@ import json
 import pickle # Ajout de pickle
 import numpy as np
 from tqdm import tqdm # Ajout de tqdm
+import time  # Ajout pour les délais dans la barre de progression
 
 class EmbeddingGenerator:
     def __init__(self, model_name="BAAI/bge-m3", device=None):
@@ -22,13 +23,27 @@ class EmbeddingGenerator:
             
         print(f"Chargement du modèle {model_name} sur {self.device}...")
         
-        # Chargement du tokenizer et du modèle avec barre de progression
+        # Chargement du tokenizer et du modèle avec barre de progression plus détaillée
         from tqdm import tqdm
-        with tqdm(total=2, desc="Chargement du modèle") as pbar:
+        
+        # Étape 1: Chargement du tokenizer (20% de la progression)
+        with tqdm(total=20, desc="Chargement du modèle") as pbar:
+            # Mise à jour progressive pendant le chargement du tokenizer
+            for _ in range(5):
+                pbar.update(1)
+                time.sleep(0.05)  # Petit délai pour visualiser la progression
+            
             self.tokenizer = AutoTokenizer.from_pretrained(model_name)
-            pbar.update(1)
+            pbar.update(5)  # Marquer la fin du chargement du tokenizer
+            
+            # Étape 2: Chargement du modèle (80% de la progression)
+            for _ in range(5):
+                pbar.update(1)
+                time.sleep(0.05)
+                
+            # Chargement effectif du modèle
             self.model = AutoModel.from_pretrained(model_name).to(self.device)
-            pbar.update(1)
+            pbar.update(5)
         
         print(f"Modèle chargé avec succès!")
         

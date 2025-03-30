@@ -1,3 +1,6 @@
+import sys
+print("Initialisation du système RAG...", flush=True)
+
 import os
 import numpy as np
 import json
@@ -5,7 +8,6 @@ import pickle # Ajout de pickle
 import argparse
 import threading
 import time
-import sys
 from bge_embeddings import EmbeddingGenerator
 import torch
 from dotenv import load_dotenv
