@@ -347,20 +347,20 @@ Réponse:"""
                 model_device = self.llm.device
                 inputs = self.tokenizer_llm(prompt, return_tensors="pt").to(model_device)
 
-            # Génération
-            with torch.no_grad():
-                outputs = self.llm.generate(
-                    **inputs,
-                    max_length=inputs['input_ids'].shape[1] + max_length, # Ajuster max_length
-                    num_return_sequences=1,
-                    temperature=0.7,
-                    top_p=0.9,
-                    pad_token_id=self.tokenizer_llm.eos_token_id # Éviter les warnings
-                )
+                # Génération
+                with torch.no_grad():
+                    outputs = self.llm.generate(
+                        **inputs,
+                        max_length=inputs['input_ids'].shape[1] + max_length, # Ajuster max_length
+                        num_return_sequences=1,
+                        temperature=0.7,
+                        top_p=0.9,
+                        pad_token_id=self.tokenizer_llm.eos_token_id # Éviter les warnings
+                    )
 
-            # Décodage
-            # S'assurer de décoder seulement les nouveaux tokens générés
-            output_text = self.tokenizer_llm.decode(outputs[0], skip_special_tokens=True)
+                # Décodage
+                # S'assurer de décoder seulement les nouveaux tokens générés
+                output_text = self.tokenizer_llm.decode(outputs[0], skip_special_tokens=True)
             
             finally:
                 # Arrêter l'animation du curseur
