@@ -2,6 +2,7 @@ import torch
 from transformers import AutoTokenizer, AutoModel
 import argparse
 import json
+import pickle # Ajout de pickle
 import numpy as np
 
 class EmbeddingGenerator:
@@ -85,17 +86,22 @@ class EmbeddingGenerator:
             })
             
         with open(output_file, 'w', encoding='utf-8') as f:
-            json.dump(results, f, ensure_ascii=False, indent=2)
-        
-        print(f"Embeddings sauvegardés dans {output_file}")
+            # Structure de sauvegarde : un dictionnaire contenant les textes et l'array numpy des embeddings
+            data_to_save = {
+                "texts": texts,
+                "embeddings": embeddings # embeddings est déjà un array numpy
+            }
+            pickle.dump(data_to_save, f)
+
+        print(f"Textes et embeddings sauvegardés dans {output_file}")
 
 
 def main():
     parser = argparse.ArgumentParser(description="Génération d'embeddings avec bge-m3")
     parser.add_argument("--input", type=str, help="Fichier texte avec une entrée par ligne")
-    parser.add_argument("--output", type=str, default="embeddings.json", 
-                        help="Fichier de sortie pour les embeddings (JSON)")
-    parser.add_argument("--device", type=str, default=None, 
+    parser.add_argument("--output", type=str, default="embeddings.pkl", # Changement .json -> .pkl
+                        help="Fichier de sortie pour les textes et embeddings (PKL)") # Changement JSON -> PKL
+    parser.add_argument("--device", type=str, default=None,
                         help="Appareil à utiliser (cpu, cuda, cuda:0, etc.)")
     parser.add_argument("--batch_size", type=int, default=8, 
                         help="Taille du batch pour le traitement")
@@ -123,9 +129,13 @@ def main():
     # Génération des embeddings
     generator = EmbeddingGenerator(device=args.device)
     embeddings = generator.generate_embeddings(texts, batch_size=args.batch_size)
-    
-    # Sauvegarde des résultats
-    generator.save_embeddings(texts, embeddings, args.output)
+
+    # Conversion en float16 avant sauvegarde
+    embeddings_f16 = embeddings.astype(np.float16)
+    print(f"Embeddings générés et convertis en {embeddings_f16.dtype}")
+
+    # Sauvegarde des résultats (textes et embeddings F16)
+    generator.save_embeddings(texts, embeddings_f16, args.output)
     
     # Affichage d'un exemple
     if len(texts) > 0:

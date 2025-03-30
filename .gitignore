@@ -107,3 +107,6 @@ ENV/
 
 # Prompt Toolkit History
 .rag_history
+
+# Pickle files (can be large)
+*.pkl

@@ -3,6 +3,7 @@ import numpy as np
 import os
 import numpy as np
 import json
+import pickle # Ajout de pickle
 import argparse
 from bge_embeddings import EmbeddingGenerator
 import torch
@@ -149,33 +150,54 @@ class RAGSystem:
         
         print(f"Génération des embeddings pour {len(self.kb_texts)} documents...")
         self.kb_embeddings = self.embedding_generator.generate_embeddings(self.kb_texts)
-        
         print("Base de connaissances chargée avec succès!")
-        
-    def load_knowledge_base_from_json(self, json_file):
+
+    def load_knowledge_base_from_pickle(self, pkl_file):
         """
-        Charge une base de connaissances préparée au format JSON.
-        
+        Charge une base de connaissances préparée au format Pickle.
+
         Args:
-            json_file: Chemin vers le fichier JSON
+            pkl_file: Chemin vers le fichier Pickle (.pkl)
         """
-        print(f"Chargement de la base de connaissances depuis {json_file}...")
-        
-        with open(json_file, 'r', encoding='utf-8') as f:
-            documents = json.load(f)
-        # Extraire les données, en gérant l'absence potentielle de chunk_id
+        print(f"Chargement de la base de connaissances depuis {pkl_file}...")
+
+        try:
+            with open(pkl_file, 'rb') as f: # Utiliser 'rb' pour le binaire
+                documents = pickle.load(f)
+        except FileNotFoundError:
+            print(f"Erreur: Le fichier {pkl_file} n'a pas été trouvé.")
+            raise
+        except Exception as e:
+            print(f"Erreur lors du chargement du fichier pickle {pkl_file}: {e}")
+            raise
+
+        if not documents:
+            print("Attention: Le fichier de base de connaissances est vide.")
+            self.kb_texts = []
+            self.kb_sources = []
+            self.kb_chunk_ids = []
+            self.kb_embeddings = np.array([])
+            return
+
+        # Extraire les données
         self.kb_texts = [doc.get("content", "") for doc in documents]
         self.kb_sources = [doc.get("source", "Inconnue") for doc in documents]
-        self.kb_chunk_ids = [doc.get("chunk_id", -1) for doc in documents] # Charger chunk_id, avec -1 par défaut
+        self.kb_chunk_ids = [doc.get("chunk_id", -1) for doc in documents]
 
-        # Si les embeddings sont déjà dans le fichier JSON
-        if documents and "embedding" in documents[0]:
+        # Les embeddings sont déjà des tableaux numpy (probablement F16)
+        # Il suffit de les empiler dans un seul grand tableau numpy
+        # S'assurer qu'ils sont bien présents
+        if "embedding" in documents[0] and documents[0]["embedding"] is not None:
+             # Convertir en F32 pour les calculs de similarité si nécessaire,
+             # bien que numpy gère les opérations mixtes F16/F32.
+             # Gardons-les en F16 pour l'instant pour économiser la RAM.
             self.kb_embeddings = np.array([doc["embedding"] for doc in documents])
-            print(f"Embeddings chargés depuis le fichier JSON pour {len(self.kb_texts)} documents.")
+            print(f"Embeddings chargés depuis le fichier PKL pour {len(self.kb_texts)} documents (dtype: {self.kb_embeddings.dtype}).")
         else:
-            print(f"Génération des embeddings pour {len(self.kb_texts)} documents...")
+            # Fallback si les embeddings manquent (ne devrait pas arriver avec prepare_kb.py)
+            print(f"Attention: Embeddings non trouvés dans {pkl_file}. Regénération...")
             self.kb_embeddings = self.embedding_generator.generate_embeddings(self.kb_texts)
-        
+
         print("Base de connaissances chargée avec succès!")
         
     def retrieve(self, query, top_k=3):
@@ -329,11 +351,19 @@ def main():
 
     # Chargement de la base de connaissances
     if args.kb:
-        if args.kb.endswith('.json'):
-            rag_system.load_knowledge_base_from_json(args.kb)
+        # Priorité au chargement depuis un fichier préparé (PKL)
+        if args.kb.lower().endswith('.pkl'):
+            try:
+                rag_system.load_knowledge_base_from_pickle(args.kb)
+            except Exception as e:
+                print(f"Impossible de charger la base de connaissances depuis {args.kb}. Erreur: {e}")
+                return # Arrêter si le chargement échoue
+        # Sinon, essayer de charger depuis un répertoire ou un fichier texte simple
         elif os.path.isdir(args.kb):
+            # Note: load_knowledge_base_from_directory génère les embeddings à la volée
             rag_system.load_knowledge_base_from_directory(args.kb)
-        else:
+        elif os.path.isfile(args.kb):
+            # Note: load_knowledge_base génère les embeddings à la volée
             rag_system.load_knowledge_base(args.kb)
     else:
         print("Aucune base de connaissances spécifiée.")

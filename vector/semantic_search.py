@@ -1,30 +1,47 @@
 import argparse
 import json
+import pickle # Ajout de pickle
 import numpy as np
 from bge_embeddings import EmbeddingGenerator
 
 def load_kb(kb_file):
     """
-    Charge une base de connaissances préparée.
-    
+    Charge une base de connaissances préparée depuis un fichier Pickle.
+
     Args:
-        kb_file: Chemin vers le fichier JSON de la base de connaissances
-        
+        kb_file: Chemin vers le fichier Pickle (.pkl) de la base de connaissances
+
     Returns:
-        Textes, sources et embeddings
+        Tuple: (Textes, sources, embeddings) ou lève une exception en cas d'erreur.
     """
-    with open(kb_file, 'r', encoding='utf-8') as f:
-        documents = json.load(f)
-    
-    texts = [doc["content"] for doc in documents]
-    sources = [doc["source"] for doc in documents]
-    
-    # Si les embeddings sont déjà dans le fichier JSON
-    if "embedding" in documents[0]:
+    print(f"Chargement de la base de connaissances depuis {kb_file}...")
+    try:
+        with open(kb_file, 'rb') as f: # Utiliser 'rb' pour le binaire
+            documents = pickle.load(f)
+    except FileNotFoundError:
+        print(f"Erreur: Le fichier {kb_file} n'a pas été trouvé.")
+        raise
+    except Exception as e:
+        print(f"Erreur lors du chargement du fichier pickle {kb_file}: {e}")
+        raise
+
+    if not documents:
+        print("Attention: Le fichier de base de connaissances est vide.")
+        return [], [], np.array([])
+
+    texts = [doc.get("content", "") for doc in documents]
+    sources = [doc.get("source", "Inconnue") for doc in documents]
+
+    # Les embeddings devraient être présents et être des tableaux numpy
+    if documents and "embedding" in documents[0] and documents[0]["embedding"] is not None:
+        # Empiler les embeddings (probablement F16)
         embeddings = np.array([doc["embedding"] for doc in documents])
+        print(f"Embeddings chargés (dtype: {embeddings.dtype})")
     else:
-        embeddings = None
-    
+        # Ceci ne devrait pas arriver si le fichier a été créé par prepare_kb.py
+        print("Attention: Embeddings non trouvés dans le fichier. Retour d'embeddings vides.")
+        embeddings = None # Ou np.array([]) ? Retourner None pour forcer la regénération si nécessaire
+
     return texts, sources, embeddings
 
 def search(query, texts, sources, embeddings, generator, top_k=5):
@@ -64,11 +81,11 @@ def search(query, texts, sources, embeddings, generator, top_k=5):
 
 def main():
     parser = argparse.ArgumentParser(description="Recherche sémantique avec bge-m3")
-    parser.add_argument("--kb", type=str, required=True, 
-                        help="Fichier JSON de la base de connaissances")
-    parser.add_argument("--query", type=str, 
+    parser.add_argument("--kb", type=str, required=True,
+                        help="Fichier PKL de la base de connaissances préparée") # Changement JSON -> PKL
+    parser.add_argument("--query", type=str,
                         help="Requête à traiter")
-    parser.add_argument("--top-k", type=int, default=5, 
+    parser.add_argument("--top-k", type=int, default=5,
                         help="Nombre de résultats à retourner")
     parser.add_argument("--device", type=str, default=None, 
                         help="Appareil à utiliser")
@@ -76,19 +93,30 @@ def main():
                         help="Mode interactif")
     
     args = parser.parse_args()
-    
     # Chargement de la base de connaissances
-    print(f"Chargement de la base de connaissances depuis {args.kb}...")
-    texts, sources, embeddings = load_kb(args.kb)
-    print(f"Base de connaissances chargée: {len(texts)} documents")
-    
-    # Si les embeddings ne sont pas dans le fichier, les générer
-    if embeddings is None:
-        print("Génération des embeddings...")
-        generator = EmbeddingGenerator(device=args.device)
-        embeddings = generator.generate_embeddings(texts)
-    else:
-        generator = EmbeddingGenerator(device=args.device)
+    try:
+        texts, sources, embeddings = load_kb(args.kb)
+        if embeddings is None:
+             # Si load_kb retourne None pour embeddings, c'est qu'ils manquaient.
+             print("Embeddings non trouvés dans le fichier PKL, regénération nécessaire...")
+             if not texts:
+                 print("Aucun texte à encoder. Arrêt.")
+                 return
+             generator = EmbeddingGenerator(device=args.device)
+             embeddings = generator.generate_embeddings(texts)
+             # Optionnel: Sauvegarder le fichier PKL mis à jour ? Pour l'instant, non.
+        elif len(texts) == 0:
+             print("La base de connaissances est vide. Arrêt.")
+             return
+        else:
+             # Embeddings chargés, on a juste besoin du générateur pour la requête
+             generator = EmbeddingGenerator(device=args.device)
+
+        print(f"Base de connaissances chargée: {len(texts)} documents")
+
+    except Exception as e:
+        print(f"Erreur lors du chargement de la base de connaissances: {e}")
+        return # Arrêt si le chargement échoue
     
     # Mode interactif
     if args.interactive:

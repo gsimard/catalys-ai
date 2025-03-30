@@ -2,6 +2,8 @@ import os
 import argparse
 import json
 import re
+import pickle # Ajout de pickle
+import numpy as np # Ajout de numpy
 from bge_embeddings import EmbeddingGenerator
 
 # Vérification de la disponibilité de PyPDF2
@@ -325,11 +327,11 @@ def process_file(file_path, chunk_size=512, overlap=50):
 
 def main():
     parser = argparse.ArgumentParser(description="Préparation de la base de connaissances")
-    parser.add_argument("--input", type=str, required=True, 
+    parser.add_argument("--input", type=str, required=True,
                         help="Fichier ou répertoire d'entrée")
-    parser.add_argument("--output", type=str, required=True, 
-                        help="Fichier de sortie (JSON)")
-    parser.add_argument("--chunk-size", type=int, default=512, 
+    parser.add_argument("--output", type=str, required=True,
+                        help="Fichier de sortie pour la base de connaissances (PKL)") # Changement de JSON à PKL
+    parser.add_argument("--chunk-size", type=int, default=512,
                         help="Taille des chunks (en caractères)")
     parser.add_argument("--overlap", type=int, default=50, 
                         help="Chevauchement entre les chunks")
@@ -401,10 +403,10 @@ def main():
     # Vérification si des documents ont été traités
     if not documents:
         print("Aucun document n'a pu être traité. Vérifiez les messages d'erreur ci-dessus.")
-        # Sauvegarde d'un fichier JSON vide
-        with open(args.output, 'w', encoding='utf-8') as f:
-            json.dump([], f, ensure_ascii=False, indent=2)
-        print(f"Fichier JSON vide créé: {args.output}")
+        # Sauvegarde d'un fichier pickle vide
+        with open(args.output, 'wb') as f:
+            pickle.dump([], f)
+        print(f"Fichier PKL vide créé: {args.output}")
         return
     
     # Génération des embeddings
@@ -415,16 +417,26 @@ def main():
         
         texts = [doc["content"] for doc in documents]
         embeddings = generator.generate_embeddings(texts)
-        
-        # Ajout des embeddings aux documents
+        # Conversion en float16 pour économiser de l'espace
+        embeddings = embeddings.astype(np.float16)
+        print(f"Embeddings convertis en {embeddings.dtype}")
+
+        # Ajout des embeddings (maintenant en F16) aux documents
         for i, embedding in enumerate(embeddings):
-            documents[i]["embedding"] = embedding.tolist()
-    
-    # Sauvegarde des résultats
+            # On stocke directement le tableau numpy F16, pas une liste
+            documents[i]["embedding"] = embedding 
+
+    # Sauvegarde des résultats au format pickle
     print(f"Sauvegarde des résultats dans {args.output}...")
-    with open(args.output, 'w', encoding='utf-8') as f:
-        json.dump(documents, f, ensure_ascii=False, indent=2)
-    
+    try:
+        with open(args.output, 'wb') as f: # Utiliser 'wb' pour le binaire
+            pickle.dump(documents, f)
+    except Exception as e:
+        print(f"Erreur lors de la sauvegarde du fichier pickle: {e}")
+        if args.debug:
+            traceback.print_exc()
+        return # Arrêter si la sauvegarde échoue
+
     print("Terminé!")
 
 
