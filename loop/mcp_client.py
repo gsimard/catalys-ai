@@ -6,7 +6,7 @@ from contextlib import AsyncExitStack
 
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
-from mcp.client.tcp import tcp_client
+from tcp import tcp_client # Correction: Importer depuis le fichier local tcp.py
 
 from anthropic import Anthropic
 from dotenv import load_dotenv
