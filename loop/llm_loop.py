@@ -811,8 +811,16 @@ async def get_user_input(use_prompt_toolkit=False, session=None):
     """Obtient l'entrée utilisateur avec gestion des interruptions"""
     try:
         if use_prompt_toolkit and session:
-            # Utiliser la version asynchrone de prompt
-            user_input = await session.prompt_async("Vous: ")
+            try:
+                # Utiliser la version asynchrone de prompt
+                user_input = await session.prompt_async("Vous: ")
+            except KeyboardInterrupt:
+                # Gérer CTRL+C spécifiquement pour prompt_toolkit
+                # Le signal handler (handle_sigint) aura déjà été appelé.
+                # Si interrupt_requested est True, mais que le programme n'a pas quitté,
+                # retourner une chaîne vide pour réafficher le prompt.
+                # Si le handler a quitté, cette partie ne sera pas atteinte.
+                return ""
         else:
             # Pour input standard, on utilise un executor pour éviter de bloquer la boucle
             loop = asyncio.get_event_loop()
