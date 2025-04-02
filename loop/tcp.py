@@ -23,15 +23,20 @@ async def tcp_client(host: str, port: int) -> AsyncIterator[Tuple[AsyncIterator[
                 break
             yield data
     
-    async def write_function(data: bytes) -> None:
-        writer.write(data)
-        await writer.drain()
-    
     try:
-        yield read_stream(), write_function
+        # Yield the reader stream function and the raw writer object
+        yield read_stream(), writer 
     finally:
-        writer.close()
-        try:
+        # Ensure the writer is closed properly
+        if not writer.is_closing():
+            writer.close()
+            try:
+                await writer.wait_closed()
+            except Exception:
+                pass # Ignore errors during cleanup, might already be closed
+        # Original cleanup logic (redundant now but kept for safety)
+        # writer.close() 
+        # try:
             await writer.wait_closed()
         except:
             pass  # Ignore errors during cleanup
