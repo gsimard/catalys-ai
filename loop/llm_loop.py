@@ -525,9 +525,12 @@ class MCPToolsProvider:
             
             return True
         except Exception as e:
-            logger.error(f"Erreur lors de l'initialisation du client MCP: {str(e)}")
+            # Log the specific exception type and message, including traceback
+            logger.error(f"Erreur lors de l'initialisation du client MCP: {type(e).__name__} - {str(e)}", exc_info=True)
+            # The user-facing message remains the same
+            print(f"Échec de la connexion au serveur MCP: {self.server_script_path}")
             return False
-    
+
     def get_tools_documentation(self):
         """Retourne la documentation des outils MCP"""
         return self.tools_documentation
