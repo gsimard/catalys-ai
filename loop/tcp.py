@@ -1,9 +1,37 @@
 import asyncio
-from typing import Tuple, AsyncIterator, Any, Optional
+from typing import Tuple, AsyncIterator, Any
 from contextlib import asynccontextmanager
+import asyncio
+
+# Importer les composants nécessaires de MCP pour l'encodage
+from mcp.shared.message import JSONRPCMessage, Encoder
+
+# Wrapper pour asyncio.StreamWriter fournissant la méthode send attendue par MCP
+class MCPStreamWriterWrapper:
+    def __init__(self, writer: asyncio.StreamWriter):
+        self._writer = writer
+        self._encoder = Encoder() # Utiliser l'encodeur de MCP
+
+    async def send(self, message: JSONRPCMessage) -> None:
+        """Encode et envoie un message JSONRPC."""
+        try:
+            encoded_message = self._encoder.encode(message)
+            self._writer.write(encoded_message + b'\n') # MCP ajoute une nouvelle ligne
+            await self._writer.drain()
+        except ConnectionError as e:
+            # Gérer les erreurs de connexion potentielles lors de l'écriture
+            print(f"Erreur de connexion lors de l'envoi: {e}")
+            # Vous pourriez vouloir lever une exception personnalisée ou logger ici
+            raise
+        except Exception as e:
+            # Gérer d'autres erreurs potentielles
+            print(f"Erreur inattendue lors de l'envoi: {e}")
+            raise
+
+    # Pas besoin de méthode close ici, car le context manager tcp_client gère la fermeture du writer original.
 
 @asynccontextmanager
-async def tcp_client(host: str, port: int) -> AsyncIterator[Tuple[AsyncIterator[Any], Any]]:
+async def tcp_client(host: str, port: int) -> AsyncIterator[Tuple[AsyncIterator[bytes], MCPStreamWriterWrapper]]:
     """
     Connect to an MCP server over TCP.
     
@@ -23,11 +51,14 @@ async def tcp_client(host: str, port: int) -> AsyncIterator[Tuple[AsyncIterator[
                 break
             yield data
     
+    # Créer le wrapper pour le writer
+    mcp_writer = MCPStreamWriterWrapper(writer)
+    
     try:
-        # Yield the reader stream function and the raw writer object
-        yield read_stream(), writer 
+        # Yield the reader stream function and the MCP writer wrapper object
+        yield read_stream(), mcp_writer
     finally:
-        # Ensure the writer is closed properly
+        # Ensure the original writer is closed properly
         if not writer.is_closing():
             writer.close()
             try:
