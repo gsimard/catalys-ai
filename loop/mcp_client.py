@@ -1,5 +1,6 @@
 import asyncio
 import socket
+import logging # Ajouter l'import logging
 from typing import Optional, Tuple, Union
 from contextlib import AsyncExitStack
 
@@ -11,6 +12,9 @@ from anthropic import Anthropic
 from dotenv import load_dotenv
 
 load_dotenv()  # load environment variables from .env
+
+# Récupérer le logger (peut être configuré dans llm_loop.py ou ici)
+logger = logging.getLogger(__name__)
 
 class MCPClient:
     def __init__(self):
@@ -71,17 +75,50 @@ class MCPClient:
         try:
             host, port_str = address.split(':')
             port = int(port_str)
+            logger.info(f"Tentative de connexion TCP à {host}:{port}...")
             
-            tcp_transport = await self.exit_stack.enter_async_context(tcp_client(host, port))
+            # Utiliser un timeout pour open_connection
+            try:
+                tcp_transport = await asyncio.wait_for(
+                    self.exit_stack.enter_async_context(tcp_client(host, port)),
+                    timeout=10.0 # Timeout de 10 secondes pour la connexion
+                )
+                logger.info(f"Connexion TCP établie avec {host}:{port}")
+            except asyncio.TimeoutError:
+                logger.error(f"Timeout lors de la connexion TCP à {host}:{port}")
+                raise ConnectionError(f"Timeout lors de la connexion à {address}")
+            except ConnectionRefusedError as e:
+                 logger.error(f"Connexion refusée par {host}:{port}. Vérifiez que le serveur écoute.")
+                 raise ConnectionRefusedError(f"Connexion refusée à {address}. Serveur en cours d'exécution?") from e
+            except OSError as e:
+                 # Autres erreurs réseau potentielles (ex: No route to host)
+                 logger.error(f"Erreur réseau lors de la connexion à {host}:{port}: {e}")
+                 raise ConnectionError(f"Erreur réseau lors de la connexion à {address}: {e}") from e
+
             self.stdio, self.write = tcp_transport
+            logger.info("Transport TCP obtenu, création de la session MCP...")
             self.session = await self.exit_stack.enter_async_context(ClientSession(self.stdio, self.write))
+            logger.info("Session MCP créée, initialisation...")
             
-            await self.session.initialize()
-            self.connection_type = 'tcp'
+            try:
+                # Utiliser un timeout pour l'initialisation MCP
+                await asyncio.wait_for(self.session.initialize(), timeout=15.0) # Timeout de 15s pour l'initialisation
+                logger.info("Initialisation de la session MCP réussie.")
+                self.connection_type = 'tcp'
+            except asyncio.TimeoutError:
+                 logger.error(f"Timeout lors de l'initialisation de la session MCP avec {address}")
+                 raise TimeoutError(f"Timeout lors de l'initialisation MCP avec {address}")
+            except Exception as e:
+                 logger.error(f"Erreur lors de l'initialisation de la session MCP avec {address}: {e}", exc_info=True)
+                 raise RuntimeError(f"Erreur d'initialisation MCP avec {address}: {e}") from e
+
         except ValueError:
-            raise ValueError(f"Invalid TCP address format: {address}. Expected format: host:port")
-        except ConnectionRefusedError:
-            raise ConnectionRefusedError(f"Connection refused to {address}. Make sure the server is running.")
+            logger.error(f"Format d'adresse TCP invalide: {address}")
+            raise ValueError(f"Format d'adresse TCP invalide: {address}. Format attendu: host:port")
+        # ConnectionRefusedError est maintenant gérée dans le bloc try interne
+        # except ConnectionRefusedError:
+        #     logger.error(f"Connexion refusée à {address}. Assurez-vous que le serveur est lancé.")
+        #     raise ConnectionRefusedError(f"Connexion refusée à {address}. Assurez-vous que le serveur est lancé.")
 
     async def get_tools_documentation(self) -> str:
         """Récupère la documentation des outils disponibles sur le serveur MCP
