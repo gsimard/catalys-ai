@@ -184,7 +184,7 @@ class MCPTCPServer:
                 logger.debug(f"Fermeture de la connexion client {client_id}")
                 client_writer.close()
                 try:
-                    await writer.wait_closed()
+                    await client_writer.wait_closed()
                 except Exception as e:
                     logger.warning(f"Erreur lors de wait_closed pour le client {client_id}: {e}")
 
