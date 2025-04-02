@@ -4,8 +4,8 @@ from contextlib import asynccontextmanager
 import asyncio
 
 # Importer les composants nécessaires de MCP pour l'encodage
-# Correction: Importer depuis le package mcp principal
-from mcp import JSONRPCMessage, Encoder 
+# Correction: Essayer d'importer depuis mcp.message
+from mcp.message import JSONRPCMessage, Encoder 
 
 # Wrapper pour asyncio.StreamWriter fournissant la méthode send attendue par MCP
 class MCPStreamWriterWrapper:
