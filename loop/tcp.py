@@ -34,9 +34,3 @@ async def tcp_client(host: str, port: int) -> AsyncIterator[Tuple[AsyncIterator[
                 await writer.wait_closed()
             except Exception:
                 pass # Ignore errors during cleanup, might already be closed
-        # Original cleanup logic (redundant now but kept for safety)
-        # writer.close() 
-        # try:
-            await writer.wait_closed()
-        except:
-            pass  # Ignore errors during cleanup
