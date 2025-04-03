@@ -4,8 +4,8 @@ from contextlib import asynccontextmanager
 import asyncio
 
 # Importer les composants nécessaires de MCP pour l'encodage
-# Correction: Utiliser JSONRPCResponse au lieu de JSONRPCMessage (qui n'existe pas)
-from mcp.shared import JSONRPCResponse, Encoder
+# Correction: Utiliser JSONRPCRequest au lieu de JSONRPCResponse (qui n'existe pas)
+from mcp.shared import JSONRPCRequest, Encoder
 
 # Wrapper pour asyncio.StreamWriter fournissant la méthode send attendue par MCP
 class MCPStreamWriterWrapper:
@@ -13,7 +13,7 @@ class MCPStreamWriterWrapper:
         self._writer = writer
         self._encoder = Encoder() # Utiliser l'encodeur de MCP
 
-    async def send(self, message: JSONRPCResponse) -> None:
+    async def send(self, message: JSONRPCRequest) -> None:
         """Encode et envoie un message JSONRPC."""
         try:
             encoded_message = self._encoder.encode(message)
